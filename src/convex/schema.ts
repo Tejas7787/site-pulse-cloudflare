@@ -16,6 +16,24 @@ export const roleValidator = v.union(
 );
 export type Role = Infer<typeof roleValidator>;
 
+const categoryScoreValidator = v.object({
+  score: v.number(),
+  passed: v.number(),
+  failed: v.number(),
+  warnings: v.number(),
+  notChecked: v.number(),
+});
+
+const issueValidator = v.object({
+  category: v.string(),
+  severity: v.union(
+    v.literal("critical"),
+    v.literal("warning"),
+    v.literal("info"),
+  ),
+  message: v.string(),
+});
+
 const schema = defineSchema(
   {
     // default auth tables using convex auth.
@@ -43,13 +61,24 @@ const schema = defineSchema(
       responseTime: v.number(),
       pageSize: v.number(),
       pageSizeFormatted: v.string(),
+
+      // SEO
       title: v.optional(v.string()),
+      titleLength: v.number(),
       description: v.optional(v.string()),
+      descriptionLength: v.number(),
       hasViewport: v.boolean(),
       hasCharset: v.boolean(),
       hasLanguage: v.boolean(),
       hasH1: v.boolean(),
       h1Count: v.number(),
+      headingStructure: v.string(),
+      canonicalUrl: v.optional(v.string()),
+      hasRobotsMeta: v.boolean(),
+      robotsTxtAvailable: v.optional(v.boolean()),
+      sitemapXmlAvailable: v.optional(v.boolean()),
+
+      // Content
       imageCount: v.number(),
       imagesWithoutAlt: v.number(),
       linkCount: v.number(),
@@ -57,28 +86,43 @@ const schema = defineSchema(
       styleCount: v.number(),
       internalLinkCount: v.number(),
       externalLinkCount: v.number(),
+      formInputCount: v.number(),
+      inputsWithoutLabels: v.number(),
+
+      // Security headers
       hasCSP: v.boolean(),
       hasXFrameOptions: v.boolean(),
       hasXContentTypeOptions: v.boolean(),
       hasStrictTransportSecurity: v.boolean(),
-      hasXPermittedCrossDomainPolicies: v.boolean(),
       hasReferrerPolicy: v.boolean(),
       hasPermissionsPolicy: v.boolean(),
-      score: v.number(),
-      grade: v.string(),
-      issues: v.array(
-        v.object({
-          category: v.string(),
-          severity: v.union(
-            v.literal("critical"),
-            v.literal("warning"),
-            v.literal("info"),
-          ),
-          message: v.string(),
-        }),
-      ),
+
+      // Category scores
+      overallScore: v.number(),
+      performanceScore: v.number(),
+      seoScore: v.number(),
+      securityScore: v.number(),
+      accessibilityScore: v.number(),
+      technicalHealthScore: v.number(),
+
+      // Checks tracking
+      performanceChecks: categoryScoreValidator,
+      seoChecks: categoryScoreValidator,
+      securityChecks: categoryScoreValidator,
+      accessibilityChecks: categoryScoreValidator,
+      technicalHealthChecks: categoryScoreValidator,
+
+      // Issues
+      issues: v.array(issueValidator),
+      topIssues: v.array(issueValidator),
+      totalChecksCompleted: v.number(),
+      totalPassed: v.number(),
+      totalFailed: v.number(),
+      totalWarnings: v.number(),
+
       scannedAt: v.number(),
-    }).index("by_url", ["url"])
+    })
+      .index("by_url", ["url"])
       .index("by_scanned_at", ["scannedAt"]),
   },
   {
