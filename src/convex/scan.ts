@@ -1,3 +1,5 @@
+"use node";
+
 import { v } from "convex/values";
 import { action } from "./_generated/server";
 import type { Issue, Severity, CheckResult, CategoryScore } from "../types/scan";
@@ -634,6 +636,12 @@ export const scanWebsite = action({
         label: "Permissions-Policy",
         critical: false,
       },
+      {
+        name: "X-Permitted-Cross-Domain-Policies",
+        key: "xpcdp",
+        label: "X-Permitted-Cross-Domain-Policies",
+        critical: false,
+      },
     ];
 
     for (const sh of securityHeaderDefs) {
@@ -918,9 +926,12 @@ export const scanWebsite = action({
       hasXFrameOptions: securityChecks["header-xfo"] === "pass",
       hasXContentTypeOptions: securityChecks["header-xcto"] === "pass",
       hasStrictTransportSecurity: securityChecks["header-hsts"] === "pass",
+      hasXPermittedCrossDomainPolicies: securityChecks["header-xpcdp"] === "pass",
       hasReferrerPolicy: securityChecks["header-rp"] === "pass",
       hasPermissionsPolicy: securityChecks["header-pp"] === "pass",
 
+      score: overallScore,
+      grade: scoreToGrade(overallScore),
       overallScore,
       performanceScore: perfScore,
       seoScore,

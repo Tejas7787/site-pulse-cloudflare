@@ -64,17 +64,17 @@ const schema = defineSchema(
 
       // SEO
       title: v.optional(v.string()),
-      titleLength: v.number(),
+      titleLength: v.optional(v.number()),
       description: v.optional(v.string()),
-      descriptionLength: v.number(),
+      descriptionLength: v.optional(v.number()),
       hasViewport: v.boolean(),
       hasCharset: v.boolean(),
       hasLanguage: v.boolean(),
       hasH1: v.boolean(),
       h1Count: v.number(),
-      headingStructure: v.string(),
+      headingStructure: v.optional(v.string()),
       canonicalUrl: v.optional(v.string()),
-      hasRobotsMeta: v.boolean(),
+      hasRobotsMeta: v.optional(v.boolean()),
       robotsTxtAvailable: v.optional(v.boolean()),
       sitemapXmlAvailable: v.optional(v.boolean()),
 
@@ -86,39 +86,44 @@ const schema = defineSchema(
       styleCount: v.number(),
       internalLinkCount: v.number(),
       externalLinkCount: v.number(),
-      formInputCount: v.number(),
-      inputsWithoutLabels: v.number(),
+      formInputCount: v.optional(v.number()),
+      inputsWithoutLabels: v.optional(v.number()),
 
       // Security headers
       hasCSP: v.boolean(),
       hasXFrameOptions: v.boolean(),
       hasXContentTypeOptions: v.boolean(),
       hasStrictTransportSecurity: v.boolean(),
+      hasXPermittedCrossDomainPolicies: v.boolean(),
       hasReferrerPolicy: v.boolean(),
       hasPermissionsPolicy: v.boolean(),
 
+      // Health score & grade (consumed by UI)
+      score: v.number(),
+      grade: v.string(),
+
       // Category scores
-      overallScore: v.number(),
-      performanceScore: v.number(),
-      seoScore: v.number(),
-      securityScore: v.number(),
-      accessibilityScore: v.number(),
-      technicalHealthScore: v.number(),
+      overallScore: v.optional(v.number()),
+      performanceScore: v.optional(v.number()),
+      seoScore: v.optional(v.number()),
+      securityScore: v.optional(v.number()),
+      accessibilityScore: v.optional(v.number()),
+      technicalHealthScore: v.optional(v.number()),
 
       // Checks tracking
-      performanceChecks: categoryScoreValidator,
-      seoChecks: categoryScoreValidator,
-      securityChecks: categoryScoreValidator,
-      accessibilityChecks: categoryScoreValidator,
-      technicalHealthChecks: categoryScoreValidator,
+      performanceChecks: v.optional(categoryScoreValidator),
+      seoChecks: v.optional(categoryScoreValidator),
+      securityChecks: v.optional(categoryScoreValidator),
+      accessibilityChecks: v.optional(categoryScoreValidator),
+      technicalHealthChecks: v.optional(categoryScoreValidator),
 
       // Issues
       issues: v.array(issueValidator),
-      topIssues: v.array(issueValidator),
-      totalChecksCompleted: v.number(),
-      totalPassed: v.number(),
-      totalFailed: v.number(),
-      totalWarnings: v.number(),
+      topIssues: v.optional(v.array(issueValidator)),
+      totalChecksCompleted: v.optional(v.number()),
+      totalPassed: v.optional(v.number()),
+      totalFailed: v.optional(v.number()),
+      totalWarnings: v.optional(v.number()),
 
       scannedAt: v.number(),
     })
