@@ -16,7 +16,27 @@ const issueValidator = v.object({
     v.literal("warning"),
     v.literal("info"),
   ),
+  priority: v.union(
+    v.literal("critical"),
+    v.literal("important"),
+    v.literal("recommended"),
+    v.literal("nice-to-have"),
+  ),
   message: v.string(),
+  whyItMatters: v.string(),
+  howToFix: v.string(),
+});
+
+const quickWinValidator = v.object({
+  category: v.string(),
+  message: v.string(),
+  potentialGain: v.number(),
+  priority: v.union(
+    v.literal("critical"),
+    v.literal("important"),
+    v.literal("recommended"),
+    v.literal("nice-to-have"),
+  ),
 });
 
 export const saveScan = mutation({
@@ -75,6 +95,7 @@ export const saveScan = mutation({
     technicalHealthChecks: v.optional(categoryScoreValidator),
     issues: v.array(issueValidator),
     topIssues: v.optional(v.array(issueValidator)),
+    quickWins: v.optional(v.array(quickWinValidator)),
     totalChecksCompleted: v.optional(v.number()),
     totalPassed: v.optional(v.number()),
     totalFailed: v.optional(v.number()),

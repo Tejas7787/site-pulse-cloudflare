@@ -2,12 +2,17 @@
 
 export type Severity = "critical" | "warning" | "info";
 
+export type Priority = "critical" | "important" | "recommended" | "nice-to-have";
+
 export type CheckResult = "pass" | "fail" | "warn" | "not-checked";
 
 export interface Issue {
   category: string;
   severity: Severity;
+  priority: Priority;
   message: string;
+  whyItMatters: string;
+  howToFix: string;
 }
 
 export interface CategoryScore {
@@ -16,6 +21,13 @@ export interface CategoryScore {
   failed: number;
   warnings: number;
   notChecked: number;
+}
+
+export interface QuickWin {
+  category: string;
+  message: string;
+  potentialGain: number;
+  priority: Priority;
 }
 
 export interface ScanResult {
@@ -87,6 +99,7 @@ export interface ScanResult {
   // Issues
   issues: Issue[];
   topIssues: Issue[];
+  quickWins: QuickWin[];
   totalChecksCompleted: number;
   totalPassed: number;
   totalFailed: number;
