@@ -61,8 +61,13 @@ export interface ScanResult {
   hasXFrameOptions: boolean;
   hasXContentTypeOptions: boolean;
   hasStrictTransportSecurity: boolean;
+  hasXPermittedCrossDomainPolicies: boolean;
   hasReferrerPolicy: boolean;
   hasPermissionsPolicy: boolean;
+
+  // Health score & grade
+  score: number;
+  grade: string;
 
   // Category scores
   overallScore: number;

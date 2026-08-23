@@ -127,17 +127,17 @@ export default function Landing() {
       const scanResult = res as ScanResult;
       setResult(scanResult);
 
-      // Save to database for shareable link
+      // Save to database and navigate to report page
       try {
         const id = await saveScan(scanResult);
         setScanId(id);
+        navigate(`/report/${id}`);
       } catch {
-        // Saving is best-effort; scan still works without it
+        // If save fails, show results inline as fallback
+        setTimeout(() => {
+          resultsRef.current?.scrollIntoView({ behavior: "smooth" });
+        }, 100);
       }
-
-      setTimeout(() => {
-        resultsRef.current?.scrollIntoView({ behavior: "smooth" });
-      }, 100);
     } catch (err) {
       setError(
         err instanceof Error

@@ -4,6 +4,7 @@ import { api } from "../convex/_generated/api";
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import type { Id } from "../convex/_generated/dataModel";
+import type { CategoryScore } from "../types/scan";
 import {
   ArrowLeft,
   CheckCircle,
@@ -20,6 +21,9 @@ import {
   Search,
   Zap,
   Eye,
+  BarChart3,
+  Clock,
+  FileText,
 } from "lucide-react";
 
 type Severity = "critical" | "warning" | "info";
@@ -30,6 +34,14 @@ const gradeColors: Record<string, string> = {
   C: "bg-yellow-400",
   D: "bg-orange-400",
   F: "bg-red-400",
+};
+
+const scoreBarColors: Record<string, string> = {
+  A: "bg-emerald-500",
+  B: "bg-lime-500",
+  C: "bg-yellow-500",
+  D: "bg-orange-500",
+  F: "bg-red-500",
 };
 
 const severityConfig: Record<
@@ -56,13 +68,28 @@ const severityConfig: Record<
   },
 };
 
-const categoryIcons: Record<string, typeof Shield> = {
-  Performance: Zap,
-  SEO: Search,
-  Security: Shield,
-  Accessibility: Eye,
-  "Technical Health": Globe,
+const categoryMeta: Record<
+  string,
+  { icon: typeof Shield; color: string; bg: string }
+> = {
+  Performance: { icon: Zap, color: "text-emerald-700", bg: "bg-[#D1FAE5]" },
+  SEO: { icon: Search, color: "text-amber-700", bg: "bg-[#FEF3C7]" },
+  Security: { icon: Shield, color: "text-blue-700", bg: "bg-[#DBEAFE]" },
+  Accessibility: { icon: Eye, color: "text-pink-700", bg: "bg-[#FCE7F3]" },
+  "Technical Health": {
+    icon: Globe,
+    color: "text-indigo-700",
+    bg: "bg-[#E0E7FF]",
+  },
 };
+
+const categoryOrder = [
+  "Performance",
+  "SEO",
+  "Security",
+  "Accessibility",
+  "Technical Health",
+];
 
 function formatDate(ts: number) {
   return new Date(ts).toLocaleDateString("en-US", {
@@ -72,6 +99,81 @@ function formatDate(ts: number) {
     hour: "numeric",
     minute: "2-digit",
   });
+}
+
+function scoreToGrade(score: number): string {
+  if (score >= 90) return "A";
+  if (score >= 80) return "B";
+  if (score >= 65) return "C";
+  if (score >= 50) return "D";
+  return "F";
+}
+
+function scoreToColor(score: number): string {
+  return scoreBarColors[scoreToGrade(score)] || "bg-gray-400";
+}
+
+function ScoreBar({
+  label,
+  score,
+  icon: Icon,
+  color,
+  bg,
+  checks,
+}: {
+  label: string;
+  score: number;
+  icon: typeof Shield;
+  color: string;
+  bg: string;
+  checks: CategoryScore;
+}) {
+  const grade = scoreToGrade(score);
+  return (
+    <div className="border-2 border-[#1a1a1a] bg-[#FFFBF0] p-4">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div
+            className={`flex size-9 items-center justify-center border-2 border-[#1a1a1a] ${bg}`}
+          >
+            <Icon className={`size-4.5 ${color}`} strokeWidth={2.5} />
+          </div>
+          <div>
+            <div className="text-sm font-black">{label}</div>
+            <div className="text-[11px] text-[#1a1a1a]/45">
+              {checks.passed} passed
+              {checks.failed > 0 ? ` · ${checks.failed} failed` : ""}
+              {checks.warnings > 0 ? ` · ${checks.warnings} warnings` : ""}
+              {checks.notChecked > 0
+                ? ` · ${checks.notChecked} not checked`
+                : ""}
+            </div>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="text-right">
+            <span className="text-2xl font-black">{score}</span>
+            <span className="ml-0.5 text-xs font-bold text-[#1a1a1a]/40">
+              /100
+            </span>
+          </div>
+          <div
+            className={`flex size-8 items-center justify-center border-2 border-[#1a1a1a] text-xs font-black ${gradeColors[grade]}`}
+          >
+            {grade}
+          </div>
+        </div>
+      </div>
+      <div className="mt-3 h-3 w-full overflow-hidden border border-[#1a1a1a]/15 bg-white">
+        <motion.div
+          initial={{ width: 0 }}
+          animate={{ width: `${score}%` }}
+          transition={{ duration: 0.8, ease: "easeOut" }}
+          className={`h-full ${scoreToColor(score)}`}
+        />
+      </div>
+    </div>
+  );
 }
 
 export default function Report() {
@@ -90,7 +192,7 @@ export default function Report() {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
-      // Fallback: select the URL
+      // Fallback
     }
   };
 
@@ -140,14 +242,6 @@ export default function Report() {
     {} as Record<string, typeof scan.issues>,
   );
 
-  // Category order
-  const categoryOrder = [
-    "Performance",
-    "SEO",
-    "Security",
-    "Accessibility",
-    "Technical Health",
-  ];
   const sortedCategories = Object.keys(issuesByCategory).sort(
     (a, b) =>
       categoryOrder.indexOf(a) === -1
@@ -156,6 +250,32 @@ export default function Report() {
           ? -1
           : categoryOrder.indexOf(a) - categoryOrder.indexOf(b),
   );
+
+  // Compute grade from score (for documents saved before grade existed)
+  const grade = scan.grade || scoreToGrade(scan.score);
+
+  // Category scores from the scan document
+  const perfScore = scan.performanceScore ?? scan.performanceChecks?.score ?? 0;
+  const seoVal = scan.seoScore ?? scan.seoChecks?.score ?? 0;
+  const secVal = scan.securityScore ?? scan.securityChecks?.score ?? 0;
+  const a11yVal = scan.accessibilityScore ?? scan.accessibilityChecks?.score ?? 0;
+  const techVal = scan.technicalHealthScore ?? scan.technicalHealthChecks?.score ?? 0;
+
+  const catScores: Record<string, number> = {
+    Performance: perfScore,
+    SEO: seoVal,
+    Security: secVal,
+    Accessibility: a11yVal,
+    "Technical Health": techVal,
+  };
+
+  const catChecks: Record<string, CategoryScore> = {
+    Performance: scan.performanceChecks ?? { score: perfScore, passed: 0, failed: 0, warnings: 0, notChecked: 0 },
+    SEO: scan.seoChecks ?? { score: seoVal, passed: 0, failed: 0, warnings: 0, notChecked: 0 },
+    Security: scan.securityChecks ?? { score: secVal, passed: 0, failed: 0, warnings: 0, notChecked: 0 },
+    Accessibility: scan.accessibilityChecks ?? { score: a11yVal, passed: 0, failed: 0, warnings: 0, notChecked: 0 },
+    "Technical Health": scan.technicalHealthChecks ?? { score: techVal, passed: 0, failed: 0, warnings: 0, notChecked: 0 },
+  };
 
   return (
     <div className="min-h-screen bg-[#FFFBF0] text-[#1a1a1a]">
@@ -186,14 +306,14 @@ export default function Report() {
             {/* Score */}
             <div className="flex flex-col items-center">
               <div
-                className={`relative flex size-28 items-center justify-center border-[3px] border-[#1a1a1a] ${gradeColors[scan.grade] || "bg-gray-300"}`}
+                className={`relative flex size-28 items-center justify-center border-[3px] border-[#1a1a1a] ${gradeColors[grade] || "bg-gray-300"}`}
               >
                 <span className="text-5xl font-black text-[#1a1a1a]">
                   {scan.score}
                 </span>
               </div>
               <div className="mt-2 border-2 border-[#1a1a1a] bg-[#1a1a1a] px-4 py-1 text-sm font-black text-white">
-                Grade {scan.grade}
+                Grade {grade}
               </div>
             </div>
 
@@ -246,6 +366,128 @@ export default function Report() {
         </div>
       </section>
 
+      {/* Check Summary */}
+      <section className="border-b-2 border-[#1a1a1a] bg-white">
+        <div className="mx-auto max-w-5xl px-4 py-6 sm:px-6">
+          <h2 className="mb-4 text-lg font-black">Check Summary</h2>
+          <div className="grid grid-cols-2 gap-0 border-2 border-[#1a1a1a] sm:grid-cols-4">
+            {[
+              {
+                label: "Checks Run",
+                value: String(scan.totalChecksCompleted ?? 0),
+                icon: BarChart3,
+                color: "text-[#1a1a1a]",
+              },
+              {
+                label: "Passed",
+                value: String(scan.totalPassed ?? 0),
+                icon: CheckCircle,
+                color: "text-emerald-600",
+              },
+              {
+                label: "Failed",
+                value: String(scan.totalFailed ?? 0),
+                icon: XCircle,
+                color: "text-red-600",
+              },
+              {
+                label: "Warnings",
+                value: String(scan.totalWarnings ?? 0),
+                icon: AlertTriangle,
+                color: "text-amber-600",
+              },
+            ].map((stat, i) => (
+              <div
+                key={stat.label}
+                className={`border-b-2 border-[#1a1a1a] p-4 ${i < 3 ? "sm:border-r-2" : ""}`}
+              >
+                <div className="flex items-center gap-2">
+                  <stat.icon className={`size-4 ${stat.color}`} />
+                  <span className="text-xs font-bold text-[#1a1a1a]/50 uppercase tracking-wider">
+                    {stat.label}
+                  </span>
+                </div>
+                <div className={`mt-2 text-3xl font-black ${stat.color}`}>
+                  {stat.value}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* Category Scores */}
+      <section className="border-b-2 border-[#1a1a1a] bg-white">
+        <div className="mx-auto max-w-5xl px-4 py-6 sm:px-6">
+          <h2 className="mb-4 text-lg font-black">Category Scores</h2>
+          <div className="space-y-3">
+            {categoryOrder.map((cat) => {
+              const meta = categoryMeta[cat];
+              if (!meta) return null;
+              return (
+                <ScoreBar
+                  key={cat}
+                  label={cat}
+                  score={catScores[cat] ?? 0}
+                  icon={meta.icon}
+                  color={meta.color}
+                  bg={meta.bg}
+                  checks={catChecks[cat] ?? { score: 0, passed: 0, failed: 0, warnings: 0, notChecked: 0 }}
+                />
+              );
+            })}
+          </div>
+        </div>
+      </section>
+
+      {/* Top 5 Issues */}
+      {(scan.topIssues?.length ?? 0) > 0 && (
+        <section className="border-b-2 border-[#1a1a1a] bg-white">
+          <div className="mx-auto max-w-5xl px-4 py-6 sm:px-6">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-black">Top Issues to Fix</h2>
+              <span className="border-2 border-[#1a1a1a] bg-red-100 px-3 py-1 text-xs font-bold text-red-600">
+                Priority
+              </span>
+            </div>
+            <div className="mt-4 space-y-2">
+              {(scan.topIssues ?? []).map((issue, i) => {
+                const config = severityConfig[issue.severity];
+                const Icon = config.icon;
+                return (
+                  <div
+                    key={i}
+                    className="flex items-start gap-3 border-2 border-[#1a1a1a] bg-[#FFFBF0] px-4 py-3"
+                  >
+                    <div className="flex size-7 shrink-0 items-center justify-center border border-[#1a1a1a]/20 bg-white text-xs font-black">
+                      {i + 1}
+                    </div>
+                    <div
+                      className={`mt-0.5 flex size-6 shrink-0 items-center justify-center border border-[#1a1a1a]/20 ${config.bg}`}
+                    >
+                      <Icon className={`size-3.5 ${config.color}`} />
+                    </div>
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className={`text-[10px] font-bold uppercase tracking-wider ${config.color}`}>
+                          {config.label}
+                        </span>
+                        <span className="text-[10px] font-bold text-[#1a1a1a]/30">
+                          {issue.category}
+                        </span>
+                      </div>
+                      <p className="mt-0.5 text-sm leading-relaxed text-[#1a1a1a]/80">
+                        {issue.message}
+                      </p>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </section>
+      )}
+
       {/* Page Overview */}
       <section className="border-b-2 border-[#1a1a1a] bg-white">
         <div className="mx-auto max-w-5xl px-4 py-6 sm:px-6">
@@ -289,7 +531,7 @@ export default function Report() {
                 label: "Images",
                 value:
                   scan.imagesWithoutAlt > 0
-                    ? `${scan.imageCount} total (${scan.imagesWithoutAlt} without alt text)`
+                    ? `${scan.imageCount} total (${scan.imagesWithoutAlt} without alt)`
                     : `${scan.imageCount} total`,
                 ok: scan.imagesWithoutAlt === 0,
               },
@@ -306,7 +548,7 @@ export default function Report() {
             ].map((stat, i) => (
               <div
                 key={stat.label}
-                className={`border-b-2 border-[#1a1a1a] p-3 ${i < 4 ? "sm:border-r-2" : ""} ${i === 3 || i === 7 ? "" : i < 4 ? "sm:border-r-2" : ""}`}
+                className={`border-b-2 border-[#1a1a1a] p-3 ${i < 4 ? "sm:border-r-2" : ""} ${i === 3 || i === 7 ? "" : ""}`}
               >
                 <div className="text-xs font-bold text-[#1a1a1a]/50 uppercase tracking-wider">
                   {stat.label}
@@ -365,7 +607,7 @@ export default function Report() {
               >
                 <div>
                   <span className="text-sm font-bold">{header.label}</span>
-                  <p className="text-[11px] text-[#1a1a1a]/40 mt-0.5">
+                  <p className="mt-0.5 text-[11px] text-[#1a1a1a]/40">
                     {header.hint}
                   </p>
                 </div>
@@ -384,11 +626,11 @@ export default function Report() {
         </div>
       </section>
 
-      {/* Issues by Category */}
+      {/* All Issues by Category */}
       <section className="border-b-2 border-[#1a1a1a] bg-white">
         <div className="mx-auto max-w-5xl px-4 py-6 sm:px-6">
           <div className="flex items-center justify-between">
-            <h2 className="text-lg font-black">Recommendations</h2>
+            <h2 className="text-lg font-black">All Recommendations</h2>
             <span className="border-2 border-[#1a1a1a] bg-[#FFFBF0] px-3 py-1 text-xs font-bold">
               {scan.issues.length} issue{scan.issues.length !== 1 ? "s" : ""}{" "}
               found
@@ -468,7 +710,8 @@ function IssueGroup({
   const [open, setOpen] = useState(true);
   const criticalCount = issues.filter((i) => i.severity === "critical").length;
   const warningCount = issues.filter((i) => i.severity === "warning").length;
-  const CatIcon = categoryIcons[category] || Globe;
+  const meta = categoryMeta[category];
+  const CatIcon = meta?.icon ?? Globe;
 
   return (
     <div className="border-2 border-[#1a1a1a] bg-[#FFFBF0]">
