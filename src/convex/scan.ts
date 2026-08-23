@@ -160,36 +160,37 @@ export const scanWebsite = action({
       issues.push({
         category: "Security",
         severity: "critical",
-        message: "Website does not use HTTPS. All sites should use HTTPS.",
+        message:
+          "Your site does not use HTTPS. Migrate to HTTPS to protect user data and improve search rankings.",
       });
     }
 
     // --- Status check ---
     if (status === 404) {
       issues.push({
-        category: "Availability",
+        category: "Technical Health",
         severity: "critical",
         message:
-          "Page returned a 404 Not Found status. The page may not exist.",
+          "The page returned a 404 Not Found status. Verify the URL is correct and the page exists.",
       });
     } else if (status === 500) {
       issues.push({
-        category: "Availability",
+        category: "Technical Health",
         severity: "critical",
         message:
-          "Server returned a 500 Internal Server Error. The site may be down.",
+          "The server returned a 500 Internal Server Error. Check your server logs and fix the underlying issue.",
       });
     } else if (status >= 400) {
       issues.push({
-        category: "Availability",
+        category: "Technical Health",
         severity: "critical",
-        message: `Server returned HTTP ${status}. This may indicate an error.`,
+        message: `The server returned HTTP ${status}. Investigate the cause and resolve the error.`,
       });
     } else if (status >= 300 && status < 400) {
       issues.push({
-        category: "Availability",
+        category: "Technical Health",
         severity: "warning",
-        message: `Final response was a redirect (HTTP ${status}). The page may not have loaded correctly.`,
+        message: `The final response was a redirect (HTTP ${status}). Ensure the redirect chain resolves correctly.`,
       });
     }
 
@@ -199,13 +200,13 @@ export const scanWebsite = action({
         issues.push({
           category: "Performance",
           severity: "warning",
-          message: `Too many redirects (${redirectChain.length}). This slows down loading and hurts SEO.`,
+          message: `Too many redirects (${redirectChain.length}). Each redirect adds latency. Point users directly to the final URL.`,
         });
       } else {
         issues.push({
           category: "Performance",
           severity: "info",
-          message: `Page redirects ${redirectChain.length} time(s). Consider pointing directly to the final URL.`,
+          message: `The page redirects ${redirectChain.length} time(s). Consider linking directly to the final destination.`,
         });
       }
 
@@ -218,7 +219,7 @@ export const scanWebsite = action({
           category: "Security",
           severity: "info",
           message:
-            "HTTP redirects to HTTPS. Good practice, but consider using HTTPS from the start.",
+            "HTTP redirects to HTTPS, which is good. Consider using HTTPS from the start to skip the redirect.",
         });
       }
     }
@@ -238,13 +239,13 @@ export const scanWebsite = action({
       issues.push({
         category: "Performance",
         severity: "warning",
-        message: `Page is very large (${formatBytes(pageSize)}). Consider optimizing content size.`,
+        message: `The page is very large (${formatBytes(pageSize)}). Compress images, minify code, and remove unused assets.`,
       });
     } else if (pageSize > 2 * 1024 * 1024) {
       issues.push({
         category: "Performance",
         severity: "info",
-        message: `Page is large (${formatBytes(pageSize)}). Could be optimized for faster loading.`,
+        message: `The page is large (${formatBytes(pageSize)}). Optimizing asset sizes will improve load times.`,
       });
     }
 
@@ -253,19 +254,19 @@ export const scanWebsite = action({
       issues.push({
         category: "Performance",
         severity: "critical",
-        message: `Very slow response time (${responseTime}ms). Aim for under 2000ms.`,
+        message: `Very slow response time (${responseTime}ms). Optimize server performance, use caching, or consider a CDN.`,
       });
     } else if (responseTime > 3000) {
       issues.push({
         category: "Performance",
         severity: "warning",
-        message: `Slow response time (${responseTime}ms). Consider optimizing server performance.`,
+        message: `Slow response time (${responseTime}ms). Enable caching and review server-side processing.`,
       });
     } else if (responseTime > 1500) {
       issues.push({
         category: "Performance",
         severity: "info",
-        message: `Response time is ${responseTime}ms. Could be faster.`,
+        message: `Response time is ${responseTime}ms. There is room to improve for a faster experience.`,
       });
     }
 
@@ -276,19 +277,20 @@ export const scanWebsite = action({
       issues.push({
         category: "SEO",
         severity: "critical",
-        message: "No <title> tag found. Every page needs a unique title tag.",
+        message:
+          "No title tag found. Add a unique, descriptive title between 30 and 60 characters to every page.",
       });
     } else if (html.title.length < 10) {
       issues.push({
         category: "SEO",
         severity: "warning",
-        message: `Title tag is very short ("${html.title}"). Aim for 30-60 characters.`,
+        message: `The title tag is very short (\"${html.title}\", ${html.title.length} characters). Expand it to 30\u201360 characters for better search visibility.`,
       });
     } else if (html.title.length > 70) {
       issues.push({
         category: "SEO",
         severity: "warning",
-        message: `Title tag is very long (${html.title.length} chars). Aim for 30-60 characters.`,
+        message: `The title tag is ${html.title.length} characters long. Shorten it to 30\u201360 characters so it displays fully in search results.`,
       });
     }
 
@@ -297,32 +299,32 @@ export const scanWebsite = action({
         category: "SEO",
         severity: "critical",
         message:
-          "No meta description found. Add a compelling 120-160 character description.",
+          "No meta description found. Write a compelling 120\u2013160 character summary for each page to improve click-through rates.",
       });
     } else if (html.description.length < 50) {
       issues.push({
         category: "SEO",
         severity: "warning",
         message:
-          "Meta description is short. Aim for 120-160 characters for best results.",
+          "The meta description is too short. Aim for 120\u2013160 characters to make the most of search result snippets.",
       });
     }
 
     if (!html.hasViewport) {
       issues.push({
-        category: "Mobile",
+        category: "Technical Health",
         severity: "critical",
         message:
-          "No viewport meta tag. Your site may not display correctly on mobile devices.",
+          "No viewport meta tag. Add <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"> so the page displays correctly on mobile devices.",
       });
     }
 
     if (!html.hasLanguage) {
       issues.push({
-        category: "SEO",
+        category: "Accessibility",
         severity: "warning",
         message:
-          'No lang attribute on <html>. Add lang="en" (or appropriate language) for accessibility and SEO.',
+          'The <html> tag is missing a lang attribute. Add lang="en" (or the appropriate language code) to improve accessibility and SEO.',
       });
     }
 
@@ -331,13 +333,13 @@ export const scanWebsite = action({
         category: "SEO",
         severity: "warning",
         message:
-          "No <h1> tag found. Every page should have exactly one <h1> tag.",
+          "No <h1> tag found. Add exactly one <h1> to each page to clearly communicate the page topic to search engines.",
       });
     } else if (html.h1Count > 1) {
       issues.push({
         category: "SEO",
         severity: "warning",
-        message: `Found ${html.h1Count} <h1> tags. Use only one <h1> per page for best SEO.`,
+        message: `Found ${html.h1Count} <h1> tags. Use a single <h1> per page to maintain a clear content hierarchy.`,
       });
     }
 
@@ -345,7 +347,7 @@ export const scanWebsite = action({
       issues.push({
         category: "Accessibility",
         severity: html.imagesWithoutAlt > 3 ? "critical" : "warning",
-        message: `${html.imagesWithoutAlt} image(s) missing alt attribute. All images need alt text for accessibility.`,
+        message: `${html.imagesWithoutAlt} image(s) are missing alt text. Add descriptive alt attributes so screen readers and search engines understand the content.`,
       });
     }
 
@@ -399,8 +401,8 @@ export const scanWebsite = action({
         issues.push({
           category: "Security",
           severity:
-            sh.name === "Content-Space-Policy" ? "critical" : "warning",
-          message: `Missing security header: ${sh.label}.`,
+            sh.name === "Content-Security-Policy" ? "critical" : "warning",
+          message: `Missing the ${sh.label} header. Add it to protect your site from common attacks.`,
         });
       }
     }
@@ -424,9 +426,9 @@ export const scanWebsite = action({
     // Positive feedback
     if (issues.length === 0) {
       issues.push({
-        category: "General",
+        category: "Technical Health",
         severity: "info",
-        message: "No issues found! Your website looks healthy.",
+        message: "No issues found. Your website looks healthy across all checks.",
       });
     }
 
