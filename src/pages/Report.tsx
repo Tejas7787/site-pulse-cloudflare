@@ -8,7 +8,8 @@ import type { Priority, Severity } from "../types/scan";
 import {
   ArrowLeft, CheckCircle, AlertTriangle, XCircle, Info, ChevronDown, ChevronUp,
   ExternalLink, Activity, Share2, Loader2, Globe, Shield, Search, Zap, Eye,
-  BarChart3, TrendingUp, TrendingDown, Minus, Target, Lightbulb,
+  BarChart3, TrendingUp, TrendingDown, Minus, Target, Lightbulb, Lock, Cookie,
+  Image, Server, FileText, BadgeCheck, AlertOctagon, ShieldAlert, BookOpen,
 } from "lucide-react";
 
 const gradeColors: Record<string, string> = { A: "bg-emerald-400", B: "bg-lime-400", C: "bg-yellow-400", D: "bg-orange-400", F: "bg-red-400" };
@@ -61,6 +62,15 @@ interface ScanDoc {
   hasXFrameOptions: boolean; hasXContentTypeOptions: boolean; hasStrictTransportSecurity: boolean;
   hasXPermittedCrossDomainPolicies: boolean; hasReferrerPolicy: boolean;
   hasPermissionsPolicy: boolean; score: number; grade: string;
+  riskLevel?: "low" | "medium" | "high" | "critical"; betterThanPercent?: number;
+  ssl?: { valid: boolean; issuer: string; expiryDate: string; daysUntilExpiry: number; serialNumber: string; subjectAltNames: string[] } | null;
+  cookies?: Array<{ name: string; httpOnly: boolean; secure: boolean; sameSite: string | null; domain: string | null }>;
+  cookiesWithIssues?: number;
+  mixedContent?: Array<{ url: string; type: "script" | "image" | "stylesheet" | "other"; lineNumber: number }>;
+  mixedContentCount?: number;
+  serverInfo?: { server: string | null; poweredBy: string | null; technology: string[]; framework: string | null };
+  siteIdentity?: { hasPrivacyPolicy: boolean; hasTermsOfService: boolean; hasContactInfo: boolean; hasOrganization: boolean; organizationName: string | null };
+  sslScore?: number; cookieScore?: number; mixedContentScore?: number;
   performanceScore?: number; seoScore?: number; securityScore?: number;
   accessibilityScore?: number; technicalHealthScore?: number;
   performanceChecks?: { score: number; passed: number; failed: number; warnings: number; notChecked: number };
@@ -89,7 +99,7 @@ function ScoreBar({ label, score, icon: Icon, color, bg, checks, weight }: {
           <div>
             <div className="text-sm font-black">{label}</div>
             <div className="text-[11px] text-[#1a1a1a]/45">
-              {checks.passed} passed{checks.failed > 0 ? ` \u00b7 ${checks.failed} failed` : ""}{checks.warnings > 0 ? ` \u00b7 ${checks.warnings} warnings` : ""}{checks.notChecked > 0 ? ` \u00b7 ${checks.notChecked} not checked` : ""}
+              {checks.passed} passed{checks.failed > 0 ? ` · ${checks.failed} failed` : ""}{checks.warnings > 0 ? ` · ${checks.warnings} warnings` : ""}{checks.notChecked > 0 ? ` · ${checks.notChecked} not checked` : ""}
               {weight && <span className="ml-1 text-[#1a1a1a]/30">({weight} of total)</span>}
             </div>
           </div>
@@ -180,6 +190,13 @@ export default function Report() {
   const criticalIssues = s.topIssues?.filter((i) => i.priority === "critical") ?? s.issues.filter((i) => i.priority === "critical").slice(0, 5);
   const quickWins = s.quickWins ?? [];
 
+  const riskConfig: Record<string, { color: string; bg: string; border: string; label: string }> = {
+    low: { color: "text-emerald-700", bg: "bg-emerald-100", border: "border-emerald-300", label: "Low Risk" },
+    medium: { color: "text-yellow-700", bg: "bg-yellow-100", border: "border-yellow-300", label: "Medium Risk" },
+    high: { color: "text-orange-700", bg: "bg-orange-100", border: "border-orange-300", label: "High Risk" },
+    critical: { color: "text-red-700", bg: "bg-red-100", border: "border-red-300", label: "Critical Risk" },
+  };
+
   return (
     <div className="min-h-screen bg-[#FFFBF0] text-[#1a1a1a]">
       <nav className="border-b-2 border-[#1a1a1a] bg-[#FFFBF0]">
@@ -189,7 +206,7 @@ export default function Report() {
         </div>
       </nav>
 
-      {/* Header with Score + Trend */}
+      {/* Header with Score + Trend + Trust Signals */}
       <section className="border-b-2 border-[#1a1a1a] bg-white">
         <div className="mx-auto max-w-5xl px-4 py-8 sm:px-6">
           <div className="flex flex-col items-center gap-6 sm:flex-row sm:items-start">
@@ -209,6 +226,17 @@ export default function Report() {
               <h1 className="text-2xl font-black sm:text-3xl">Website Health Report</h1>
               <div className="mt-2 flex items-center gap-2 justify-center sm:justify-start"><Globe className="size-4 text-[#1a1a1a]/40" /><span className="text-sm text-[#1a1a1a]/60 break-all font-medium">{s.url}</span><a href={s.url} target="_blank" rel="noopener noreferrer" className="shrink-0 text-[#1a1a1a]/40 hover:text-[#1a1a1a] transition-colors"><ExternalLink className="size-4" /></a></div>
               <p className="mt-1 text-xs text-[#1a1a1a]/40">Scanned {formatDate(s.scannedAt)}</p>
+              {/* Trust signals row */}
+              <div className="mt-3 flex flex-wrap items-center gap-2 justify-center sm:justify-start">
+                <span className="inline-flex items-center gap-1.5 border-2 border-[#1a1a1a] bg-emerald-100 px-2.5 py-1 text-[11px] font-bold text-emerald-700"><BadgeCheck className="size-3.5" />Verified Scan</span>
+                {s.riskLevel && (
+                  <span className={`inline-flex items-center gap-1.5 border-2 border-[#1a1a1a] ${riskConfig[s.riskLevel].bg} px-2.5 py-1 text-[11px] font-bold ${riskConfig[s.riskLevel].color}`}>
+                    {s.riskLevel === "low" ? <Shield className="size-3.5" /> : <ShieldAlert className="size-3.5" />}{riskConfig[s.riskLevel].label}
+                  </span>
+                )}
+                {s.betterThanPercent && <span className="inline-flex items-center gap-1.5 border-2 border-[#1a1a1a] bg-[#DBEAFE] px-2.5 py-1 text-[11px] font-bold text-blue-700">Better than {s.betterThanPercent}% of scanned sites</span>}
+                <span className="inline-flex items-center gap-1.5 border-2 border-[#1a1a1a] bg-[#FFFBF0] px-2.5 py-1 text-[11px] font-bold text-[#1a1a1a]/50">Scan #{id?.slice(-6) || "—"}</span>
+              </div>
               <div className="mt-4 flex flex-wrap gap-2 justify-center sm:justify-start">
                 <StatusPill ok={s.status >= 200 && s.status < 400} label={`HTTP ${s.status}`} />
                 <StatusPill ok={s.https} label={s.https ? "HTTPS" : "No HTTPS"} />
@@ -230,7 +258,7 @@ export default function Report() {
             {categoryOrder.map((cat) => (
               <div key={cat} className="border-r-2 border-[#1a1a1a] p-3 text-center last:border-r-0">
                 <div className="text-xs font-bold text-[#1a1a1a]/50">{cat}</div>
-                <div className="mt-1 text-2xl font-black">{catScores[cat] ?? "\u2014"}</div>
+                <div className="mt-1 text-2xl font-black">{catScores[cat] ?? "—"}</div>
                 <div className="text-[10px] font-bold text-[#1a1a1a]/30 mt-0.5">{scoreWeightLabels[cat]}</div>
               </div>
             ))}
@@ -310,29 +338,154 @@ export default function Report() {
         </div>
       </section>
 
-      {/* Page Overview */}
-      <section className="border-b-2 border-[#1a1a1a] bg-white">
-        <div className="mx-auto max-w-5xl px-4 py-6 sm:px-6">
-          <h2 className="mb-4 text-lg font-black">Page Overview</h2>
-          <div className="grid grid-cols-2 gap-0 border-2 border-[#1a1a1a] sm:grid-cols-4">
-            {[
-              { label: "Title", value: s.title ? (s.title.length > 40 ? s.title.slice(0, 40) + "\u2026" : s.title) : "Missing", ok: !!s.title },
-              { label: "Meta Description", value: s.description ? (s.description.length > 40 ? s.description.slice(0, 40) + "\u2026" : s.description) : "Missing", ok: !!s.description },
-              { label: "Viewport", value: s.hasViewport ? "Configured" : "Missing", ok: s.hasViewport },
-              { label: "Language", value: s.hasLanguage ? "Configured" : "Missing", ok: s.hasLanguage },
-              { label: "Headings (H1)", value: String(s.h1Count), ok: s.h1Count === 1 },
-              { label: "Images", value: s.imagesWithoutAlt > 0 ? `${s.imageCount} total (${s.imagesWithoutAlt} without alt)` : `${s.imageCount} total`, ok: s.imagesWithoutAlt === 0 },
-              { label: "Links", value: `${s.internalLinkCount} internal / ${s.externalLinkCount} external`, ok: true },
-              { label: "Scripts & Styles", value: `${s.scriptCount} scripts / ${s.styleCount} styles`, ok: s.scriptCount < 15 },
-            ].map((stat, i) => (
-              <div key={stat.label} className={`border-b-2 border-[#1a1a1a] p-3 ${i < 4 ? "sm:border-r-2" : ""}`}>
-                <div className="text-xs font-bold text-[#1a1a1a]/50 uppercase tracking-wider">{stat.label}</div>
-                <div className={`mt-1 text-sm font-bold ${stat.ok ? "text-[#1a1a1a]" : "text-red-600"}`}>{stat.value}</div>
+      {/* SSL Certificate Analysis */}
+      {s.ssl && (
+        <section className="border-b-2 border-[#1a1a1a] bg-white">
+          <div className="mx-auto max-w-5xl px-4 py-6 sm:px-6">
+            <div className="flex items-center gap-2 mb-4"><Lock className="size-5 text-blue-600" /><h2 className="text-lg font-black">SSL Certificate</h2></div>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div className="border-2 border-[#1a1a1a] bg-[#FFFBF0] p-4">
+                <div className="text-xs font-bold text-[#1a1a1a]/50 uppercase tracking-wider">Status</div>
+                <div className={`mt-1 text-lg font-black ${s.ssl.valid ? "text-emerald-600" : "text-red-600"}`}>{s.ssl.valid ? "Valid" : "Invalid"}</div>
               </div>
-            ))}
+              <div className="border-2 border-[#1a1a1a] bg-[#FFFBF0] p-4">
+                <div className="text-xs font-bold text-[#1a1a1a]/50 uppercase tracking-wider">Issuer</div>
+                <div className="mt-1 text-sm font-bold">{s.ssl.issuer || "Unknown"}</div>
+              </div>
+              <div className="border-2 border-[#1a1a1a] bg-[#FFFBF0] p-4">
+                <div className="text-xs font-bold text-[#1a1a1a]/50 uppercase tracking-wider">Expires</div>
+                <div className={`mt-1 text-sm font-bold ${s.ssl.daysUntilExpiry < 30 ? "text-red-600" : s.ssl.daysUntilExpiry < 60 ? "text-amber-600" : "text-[#1a1a1a]"}`}>{s.ssl.expiryDate || "Unknown"}</div>
+                <div className={`text-[11px] font-bold mt-0.5 ${s.ssl.daysUntilExpiry < 30 ? "text-red-600" : s.ssl.daysUntilExpiry < 60 ? "text-amber-600" : "text-[#1a1a1a]/50"}`}>
+                  {s.ssl.daysUntilExpiry < 0 ? `Expired ${Math.abs(s.ssl.daysUntilExpiry)} days ago` : `${s.ssl.daysUntilExpiry} days remaining`}
+                  {s.ssl.daysUntilExpiry < 30 && s.ssl.daysUntilExpiry >= 0 && " — renew soon"}
+                </div>
+              </div>
+              <div className="border-2 border-[#1a1a1a] bg-[#FFFBF0] p-4">
+                <div className="text-xs font-bold text-[#1a1a1a]/50 uppercase tracking-wider">SSL Score</div>
+                <div className="mt-1 text-lg font-black">{s.sslScore ?? "—"}/100</div>
+              </div>
+            </div>
           </div>
-        </div>
-      </section>
+        </section>
+      )}
+
+      {/* Cookie Security */}
+      {s.cookies && s.cookies.length > 0 && (
+        <section className="border-b-2 border-[#1a1a1a] bg-white">
+          <div className="mx-auto max-w-5xl px-4 py-6 sm:px-6">
+            <div className="flex items-center gap-2 mb-4"><Cookie className="size-5 text-purple-600" /><h2 className="text-lg font-black">Cookie Security</h2><span className="text-xs font-bold text-[#1a1a1a]/40">({s.cookies.length} cookie{s.cookies.length !== 1 ? "s" : ""})</span></div>
+            <div className="space-y-2">
+              {s.cookies.map((cookie, i) => (
+                <div key={i} className="border-2 border-[#1a1a1a] bg-[#FFFBF0] px-4 py-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-bold">{cookie.name}</span>
+                    <div className="flex gap-1.5">
+                      <span className={`border px-2 py-0.5 text-[10px] font-bold ${cookie.httpOnly ? "border-emerald-300 bg-emerald-100 text-emerald-700" : "border-red-300 bg-red-100 text-red-600"}`}>
+                        HttpOnly {cookie.httpOnly ? "✓" : "✗"}
+                      </span>
+                      <span className={`border px-2 py-0.5 text-[10px] font-bold ${cookie.secure ? "border-emerald-300 bg-emerald-100 text-emerald-700" : "border-red-300 bg-red-100 text-red-600"}`}>
+                        Secure {cookie.secure ? "✓" : "✗"}
+                      </span>
+                      <span className={`border px-2 py-0.5 text-[10px] font-bold ${cookie.sameSite ? "border-emerald-300 bg-emerald-100 text-emerald-700" : "border-red-300 bg-red-100 text-red-600"}`}>
+                        SameSite {cookie.sameSite || "✗"}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+            {s.cookiesWithIssues && s.cookiesWithIssues > 0 && (
+              <p className="mt-3 text-xs text-red-600 font-medium">{s.cookiesWithIssues} cookie{s.cookiesWithIssues !== 1 ? "s" : ""} missing security flags — see recommendations below.</p>
+            )}
+          </div>
+        </section>
+      )}
+
+      {/* Mixed Content */}
+      {s.mixedContent && s.mixedContent.length > 0 && (
+        <section className="border-b-2 border-[#1a1a1a] bg-white">
+          <div className="mx-auto max-w-5xl px-4 py-6 sm:px-6">
+            <div className="flex items-center gap-2 mb-4"><Image className="size-5 text-orange-600" /><h2 className="text-lg font-black">Mixed Content</h2><span className="border-2 border-orange-300 bg-orange-100 px-2 py-0.5 text-[10px] font-bold text-orange-700">{s.mixedContent.length} resource{s.mixedContent.length !== 1 ? "s" : ""}</span></div>
+            <p className="text-xs text-[#1a1a1a]/50 mb-3">These HTTP resources are loaded on your HTTPS page, which can compromise security.</p>
+            <div className="space-y-1.5">
+              {s.mixedContent.slice(0, 10).map((mc, i) => (
+                <div key={i} className="flex items-center gap-3 border-2 border-[#1a1a1a] bg-[#FFFBF0] px-3 py-2">
+                  <span className={`shrink-0 border px-1.5 py-0.5 text-[10px] font-bold ${mc.type === "script" ? "border-red-300 bg-red-100 text-red-600" : mc.type === "stylesheet" ? "border-amber-300 bg-amber-100 text-amber-600" : "border-blue-300 bg-blue-100 text-blue-600"}`}>{mc.type}</span>
+                  <span className="text-xs text-[#1a1a1a]/70 truncate flex-1">{mc.url}</span>
+                  <span className="text-[10px] text-[#1a1a1a]/30 shrink-0">L{mc.lineNumber}</span>
+                </div>
+              ))}
+              {s.mixedContent.length > 10 && <p className="text-xs text-[#1a1a1a]/40">…and {s.mixedContent.length - 10} more</p>}
+            </div>
+          </div>
+        </section>
+      )}
+
+      {/* Server Information */}
+      {s.serverInfo && (s.serverInfo.technology.length > 0 || s.serverInfo.server || s.serverInfo.framework) && (
+        <section className="border-b-2 border-[#1a1a1a] bg-white">
+          <div className="mx-auto max-w-5xl px-4 py-6 sm:px-6">
+            <div className="flex items-center gap-2 mb-4"><Server className="size-5 text-indigo-600" /><h2 className="text-lg font-black">Server Information</h2></div>
+            <p className="text-xs text-[#1a1a1a]/50 mb-3">Publicly visible information about the server and technology stack.</p>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              {s.serverInfo.server && (
+                <div className="border-2 border-[#1a1a1a] bg-[#FFFBF0] px-4 py-3">
+                  <div className="text-[10px] font-bold text-[#1a1a1a]/50 uppercase tracking-wider">Web Server</div>
+                  <div className="mt-1 text-sm font-bold">{s.serverInfo.server}</div>
+                </div>
+              )}
+              {s.serverInfo.framework && (
+                <div className="border-2 border-[#1a1a1a] bg-[#FFFBF0] px-4 py-3">
+                  <div className="text-[10px] font-bold text-[#1a1a1a]/50 uppercase tracking-wider">Framework</div>
+                  <div className="mt-1 text-sm font-bold">{s.serverInfo.framework}</div>
+                </div>
+              )}
+              {s.serverInfo.technology.length > 0 && (
+                <div className="border-2 border-[#1a1a1a] bg-[#FFFBF0] px-4 py-3 sm:col-span-2">
+                  <div className="text-[10px] font-bold text-[#1a1a1a]/50 uppercase tracking-wider">Detected Technologies</div>
+                  <div className="mt-1.5 flex flex-wrap gap-1.5">
+                    {s.serverInfo.technology.map((tech, i) => (
+                      <span key={i} className="border-2 border-[#1a1a1a] bg-white px-2 py-0.5 text-xs font-bold">{tech}</span>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </section>
+      )}
+
+      {/* Site Identity */}
+      {s.siteIdentity && (
+        <section className="border-b-2 border-[#1a1a1a] bg-white">
+          <div className="mx-auto max-w-5xl px-4 py-6 sm:px-6">
+            <div className="flex items-center gap-2 mb-4"><FileText className="size-5 text-teal-600" /><h2 className="text-lg font-black">Site Identity</h2></div>
+            <p className="text-xs text-[#1a1a1a]/50 mb-3">Trust indicators and legal pages detected on the website.</p>
+            <div className="grid grid-cols-2 gap-0 border-2 border-[#1a1a1a] sm:grid-cols-3">
+              {[
+                { label: "Privacy Policy", present: s.siteIdentity.hasPrivacyPolicy },
+                { label: "Terms of Service", present: s.siteIdentity.hasTermsOfService },
+                { label: "Contact Info", present: s.siteIdentity.hasContactInfo },
+                { label: "Organization", present: s.siteIdentity.hasOrganization },
+              ].map((item, i) => (
+                <div key={item.label} className={`border-b-2 border-[#1a1a1a] p-3 ${i < 3 ? "sm:border-r-2" : ""} ${i >= 2 ? "sm:border-b-0" : ""}`}>
+                  <div className="text-xs font-bold text-[#1a1a1a]/50 uppercase tracking-wider">{item.label}</div>
+                  <div className={`mt-1 flex items-center gap-1.5 text-sm font-bold ${item.present ? "text-emerald-600" : "text-red-600"}`}>
+                    {item.present ? <CheckCircle className="size-3.5" /> : <XCircle className="size-3.5" />}
+                    {item.present ? "Found" : "Not found"}
+                  </div>
+                </div>
+              ))}
+              {s.siteIdentity.organizationName && (
+                <div className="border-b-2 border-[#1a1a1a] p-3 sm:border-b-0">
+                  <div className="text-xs font-bold text-[#1a1a1a]/50 uppercase tracking-wider">Organization Name</div>
+                  <div className="mt-1 text-sm font-bold">{s.siteIdentity.organizationName}</div>
+                </div>
+              )}
+            </div>
+          </div>
+        </section>
+      )}
 
       {/* Security Headers */}
       <section className="border-b-2 border-[#1a1a1a] bg-white">
@@ -364,8 +517,35 @@ export default function Report() {
         </div>
       </section>
 
+      {/* Why Trust This Report? */}
+      <section className="border-b-2 border-[#1a1a1a] bg-white">
+        <div className="mx-auto max-w-5xl px-4 py-6 sm:px-6">
+          <div className="flex items-center gap-2 mb-4"><BookOpen className="size-5 text-[#1a1a1a]" /><h2 className="text-lg font-black">Why Trust This Report?</h2></div>
+          <div className="border-2 border-[#1a1a1a] bg-[#FFFBF0] p-4 space-y-3">
+            <div className="border-l-3 border-blue-400 pl-3">
+              <h3 className="text-sm font-black">How This Scan Works</h3>
+              <p className="mt-1 text-xs leading-relaxed text-[#1a1a1a]/65">SitePulse connects to your website from a secure server, fetches the publicly accessible HTML and HTTP headers, then analyzes the response against established web standards. Every check is performed on real data — no simulated or estimated results.</p>
+            </div>
+            <div className="border-l-3 border-emerald-400 pl-3">
+              <h3 className="text-sm font-black">What We Check</h3>
+              <p className="mt-1 text-xs leading-relaxed text-[#1a1a1a]/65">We perform {s.totalChecksCompleted ?? 0} checks across performance (response time, page size), SEO (title, meta description, headings), security (HTTPS, headers, SSL certificate, cookies, mixed content), accessibility (alt text, labels, language), and technical health (HTTP status, redirects, markup). Only checks that could be completed are counted in your score.</p>
+            </div>
+            <div className="border-l-3 border-amber-400 pl-3">
+              <h3 className="text-sm font-black">Scoring Methodology</h3>
+              <p className="mt-1 text-xs leading-relaxed text-[#1a1a1a]/65">Each category is scored independently on a 0–100 scale. Your overall score weights categories by impact: Security (30%), Performance (25%), SEO (25%), Technical Health (10%), and Accessibility (10%). SSL, cookies, and mixed content contribute to the overall score as supplementary signals. Missing checks are excluded from the score calculation — they neither help nor hurt.</p>
+            </div>
+            <div className="border-l-3 border-purple-400 pl-3">
+              <h3 className="text-sm font-black">Privacy & Safety</h3>
+              <p className="mt-1 text-xs leading-relaxed text-[#1a1a1a]/65">We never request passwords, API keys, or private credentials. Only publicly accessible pages are analyzed. No cookies are set, no tracking scripts are injected, and no modifications are made to your website. Scans are stored anonymously for 30 days so you can share and revisit reports.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Scan ID */}
       <section className="bg-[#FFFBF0]">
-        <div className="mx-auto max-w-5xl px-4 py-10 text-center sm:px-6">
+        <div className="mx-auto max-w-5xl px-4 py-6 text-center sm:px-6">
+          <p className="text-[10px] text-[#1a1a1a]/30 mb-1">Scan ID: {id || "—"} · Generated {formatDate(s.scannedAt)}</p>
           <p className="mb-4 text-sm font-medium text-[#1a1a1a]/60">Want to check another website?</p>
           <Link to="/" className="inline-flex items-center gap-2 border-2 border-[#1a1a1a] bg-[#FDE68A] px-6 py-3 text-sm font-black shadow-[3px_3px_0px_0px_#1a1a1a] transition-all hover:shadow-[1px_1px_0px_0px_#1a1a1a] hover:translate-x-[2px] hover:translate-y-[2px]"><Activity className="size-4" />Run a New Scan</Link>
         </div>

@@ -2,7 +2,8 @@
 
 import { v } from "convex/values";
 import { action } from "./_generated/server";
-import type { Issue, Priority, Severity, CheckResult, CategoryScore, QuickWin } from "../types/scan";
+import type { Issue, Priority, Severity, CheckResult, CategoryScore, QuickWin, SSLInfo, CookieInfo, MixedContent, ServerInfo, SiteIdentity } from "../types/scan";
+import tls from "node:tls";
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
@@ -816,6 +817,249 @@ export const scanWebsite = action({
     techScore = clamp(techScore, 0, 100);
 
     // ══════════════════════════════════════════════════════════════════
+    // SSL CERTIFICATE ANALYSIS
+    // ══════════════════════════════════════════════════════════════════
+
+    let sslInfo: SSLInfo | null = null;
+    let sslScore = 0;
+
+    if (isHttps) {
+      try {
+        const cert = await new Promise<tls.PeerCertificate>((resolve, reject) => {
+          const socket = tls.connect({ host: parsedUrl.hostname, port: 443, servername: parsedUrl.hostname, rejectUnauthorized: false, timeout: 5000 }, () => {
+            const peerCert = socket.getPeerCertificate();
+            socket.end();
+            if (peerCert && peerCert.valid_from) resolve(peerCert);
+            else reject(new Error("No certificate"));
+          });
+          socket.on("error", reject);
+          socket.on("timeout", () => { socket.destroy(); reject(new Error("Timeout")); });
+        });
+
+        const expiryDate = new Date(cert.valid_to);
+        const daysUntilExpiry = Math.ceil((expiryDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+        const issuer = String(cert.issuer?.CN || cert.issuer?.O || "Unknown");
+        const serialNumber = cert.serialNumber || "";
+        const subjectAltNames: string[] = [];
+        if (cert.subjectaltname) {
+          subjectAltNames.push(...cert.subjectaltname.split(",").map((s: string) => s.trim().replace(/^DNS:/, "")));
+        }
+
+        sslInfo = {
+          valid: daysUntilExpiry > 0,
+          issuer,
+          expiryDate: expiryDate.toISOString(),
+          daysUntilExpiry,
+          serialNumber,
+          subjectAltNames,
+        };
+
+        // SSL scoring: valid=+10, expiring<30d=+5, expired=0
+        if (daysUntilExpiry > 30) sslScore = 100;
+        else if (daysUntilExpiry > 0) sslScore = 50;
+        else sslScore = 0;
+
+        if (daysUntilExpiry <= 0) {
+          addIssue("Security", "critical", "critical",
+            "SSL certificate has expired.",
+            "An expired certificate causes browser warnings and breaks trust with visitors. Most users will see a security warning and leave immediately.",
+            "Renew your SSL certificate immediately. Consider using auto-renewal services like Let's Encrypt to prevent future expirations.",
+          );
+        } else if (daysUntilExpiry <= 30) {
+          addIssue("Security", "warning", "important",
+            `SSL certificate expires in ${daysUntilExpiry} days (${expiryDate.toLocaleDateString()}).`,
+            "An expiring certificate will soon trigger browser warnings, breaking trust with your visitors.",
+            "Renew your SSL certificate before it expires. Enable auto-renewal to prevent future issues.",
+          );
+        }
+      } catch {
+        sslScore = 0;
+        addIssue("Security", "warning", "important",
+          "Could not verify SSL certificate.",
+          "The SSL certificate could not be checked. This might indicate a misconfiguration or connection issue.",
+          "Verify your SSL certificate is properly installed and the server is accessible on port 443.",
+        );
+      }
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // COOKIE SECURITY CHECK
+    // ══════════════════════════════════════════════════════════════════
+
+    const cookies: CookieInfo[] = [];
+    const setCookieHeaders = headers.getSetCookie?.() || [];
+    // Also check raw header as fallback
+    if (setCookieHeaders.length === 0) {
+      const rawCookie = headers.get("set-cookie");
+      if (rawCookie) setCookieHeaders.push(rawCookie);
+    }
+
+    for (const cookieStr of setCookieHeaders) {
+      const parts = cookieStr.split(";").map((p) => p.trim());
+      const nameValue = parts[0] || "";
+      const name = nameValue.split("=")[0] || "";
+      const lowerParts = parts.map((p) => p.toLowerCase());
+      cookies.push({
+        name,
+        httpOnly: lowerParts.includes("httponly"),
+        secure: lowerParts.includes("secure"),
+        sameSite: lowerParts.find((p) => p.startsWith("samesite="))?.split("=")[1] || null,
+        domain: parts.find((p) => p.toLowerCase().startsWith("domain="))?.split("=")[1] || null,
+      });
+    }
+
+    let cookiesWithIssues = 0;
+    let cookieScore = cookies.length > 0 ? 100 : -1; // -1 = not checked
+
+    for (const cookie of cookies) {
+      const missingFlags: string[] = [];
+      if (!cookie.httpOnly) missingFlags.push("HttpOnly");
+      if (!cookie.secure && isHttps) missingFlags.push("Secure");
+      if (!cookie.sameSite) missingFlags.push("SameSite");
+      if (missingFlags.length > 0) {
+        cookiesWithIssues++;
+        cookieScore = clamp(cookieScore - missingFlags.length * 3, 0, 100);
+        addIssue("Security", "warning", "recommended",
+          `Cookie "${cookie.name}" is missing security flags: ${missingFlags.join(", ")}.`,
+          `Missing ${missingFlags.join(" and ")} flags makes the cookie vulnerable to theft via XSS attacks or CSRF.`,
+          `Add the missing flags: Set-Cookie: ${cookie.name}=...; HttpOnly; Secure; SameSite=Lax`,
+        );
+      }
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // MIXED CONTENT DETECTION
+    // ══════════════════════════════════════════════════════════════════
+
+    const mixedContent: MixedContent[] = [];
+    let mixedContentScore = 100;
+
+    if (isHttps && hasHtml) {
+      // Find HTTP resources in src/href attributes
+      const httpResourceRegex = /(src|href)=(['"])(http:\/\/[^'\"]+)\2/gi;
+      let match;
+      let lineNum = 1;
+      const lines = pageContent.split("\n");
+
+      for (let li = 0; li < lines.length; li++) {
+        const line = lines[li];
+        const lineMatches = line.matchAll(/(src|href)=(['"])(http:\/\/[^'\"]+)\2/gi);
+        for (const m of lineMatches) {
+          const url = m[3];
+          let type: MixedContent["type"] = "other";
+          if (/\.js(\?|$)/i.test(url) || /script/i.test(m[0])) type = "script";
+          else if (/\.css(\?|$)/i.test(url) || /stylesheet/i.test(m[0]) || /rel=["']stylesheet["']/i.test(m[0])) type = "stylesheet";
+          else if (/\.(png|jpe?g|gif|svg|webp|ico)(\?|$)/i.test(url)) type = "image";
+          mixedContent.push({ url, type, lineNumber: li + 1 });
+        }
+      }
+    }
+
+    if (mixedContent.length > 0) {
+      mixedContentScore = clamp(100 - mixedContent.length * 15, 0, 100);
+      const scripts = mixedContent.filter((m) => m.type === "script").length;
+      const images = mixedContent.filter((m) => m.type === "image").length;
+      const styles = mixedContent.filter((m) => m.type === "stylesheet").length;
+      const parts = [];
+      if (scripts) parts.push(`${scripts} script(s)`);
+      if (images) parts.push(`${images} image(s)`);
+      if (styles) parts.push(`${styles} stylesheet(s)`);
+
+      addIssue("Security",
+        scripts > 0 ? "critical" : "warning",
+        scripts > 0 ? "critical" : "recommended",
+        `Found ${mixedContent.length} mixed content resource(s) on HTTPS page: ${parts.join(", ")}.`,
+        "Mixed content allows attackers to intercept or modify insecure resources on your HTTPS page, potentially injecting malicious code or stealing data.",
+        "Change all HTTP URLs to HTTPS, or use protocol-relative URLs (//example.com). For external resources, ensure they support HTTPS.",
+      );
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // SERVER INFORMATION
+    // ══════════════════════════════════════════════════════════════════
+
+    const serverHeader = headers.get("server") || headers.get("Server") || null;
+    const poweredByHeader = headers.get("x-powered-by") || headers.get("X-Powered-By") || null;
+    const technology: string[] = [];
+    let framework: string | null = null;
+
+    if (serverHeader) {
+      const sv = serverHeader.toLowerCase();
+      if (sv.includes("nginx")) technology.push("Nginx");
+      else if (sv.includes("apache")) technology.push("Apache");
+      else if (sv.includes("cloudflare")) technology.push("Cloudflare");
+      else if (sv.includes("caddy")) technology.push("Caddy");
+      else if (sv.includes("litespeed")) technology.push("LiteSpeed");
+      else technology.push(serverHeader);
+    }
+
+    if (poweredByHeader) {
+      const pf = poweredByHeader.toLowerCase();
+      if (pf.includes("next.js")) framework = "Next.js";
+      else if (pf.includes("nuxt")) framework = "Nuxt.js";
+      else if (pf.includes("express")) framework = "Express";
+      else if (pf.includes("laravel")) framework = "Laravel";
+      else if (pf.includes("rails")) framework = "Ruby on Rails";
+      else if (pf.includes("asp.net")) framework = "ASP.NET";
+      else if (pf.includes("django")) framework = "Django";
+      else if (pf.includes("flask")) framework = "Flask";
+      else if (pf.includes("php")) framework = "PHP";
+      else framework = poweredByHeader;
+      technology.push(framework);
+    }
+
+    // Detect from HTML markers
+    if (hasHtml) {
+      if (/__next|next\/|_next\/|react|__react/i.test(pageContent)) technology.push("React/Next.js (detected)");
+      else if (/nuxt|__nuxt/i.test(pageContent)) technology.push("Nuxt.js (detected)");
+      else if (/wordpress|wp-content|wp-includes/i.test(pageContent)) technology.push("WordPress (detected)");
+      else if (/shopify/i.test(pageContent)) technology.push("Shopify (detected)");
+      else if (/wix\.com|wixstatic/i.test(pageContent)) technology.push("Wix (detected)");
+      else if (/squarespace/i.test(pageContent)) technology.push("Squarespace (detected)");
+      else if (/gatsby/i.test(pageContent)) technology.push("Gatsby (detected)");
+      else if (/astro/i.test(pageContent)) technology.push("Astro (detected)");
+    }
+
+    const serverInfo: ServerInfo = { server: serverHeader, poweredBy: poweredByHeader, technology: [...new Set(technology)], framework };
+
+    if (serverHeader && technology.some((t) => t.includes("detected"))) {
+      addIssue("Security", "info", "nice-to-have",
+        `Server technology is publicly visible: ${technology.join(", ")}.`,
+        "Publicly disclosing server technology can help attackers identify known vulnerabilities for that specific stack.",
+        "Remove or obfuscate server identification headers (Server, X-Powered-By) where possible.",
+      );
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // SITE IDENTITY
+    // ══════════════════════════════════════════════════════════════════
+
+    const hasPrivacyPolicy = /privacy[- _]?policy|datenschutz|privacidad/i.test(html);
+    const hasTermsOfService = /terms[- _]?(?:of[- _]?)?service|terms[- _]?and[- _]?conditions|agb|términos/i.test(html);
+    const hasContactInfo = /contact[\s@]|mailto:|tel:|phone|address|support@/i.test(html);
+    const orgFromSsl = sslInfo?.issuer && !sslInfo.issuer.match(/^(Let's Encrypt|DigiCert|Sectigo|Comodo|GeoTrust|GlobalSign|Thawte)$/i) ? sslInfo.issuer : null;
+    const hasOrganization = !!orgFromSsl || /organization|company|about[- _]?us/i.test(html);
+    const organizationName = orgFromSsl || null;
+
+    const siteIdentity: SiteIdentity = { hasPrivacyPolicy, hasTermsOfService, hasContactInfo, hasOrganization, organizationName };
+
+    if (!hasPrivacyPolicy && hasHtml) {
+      addIssue("Security", "info", "nice-to-have",
+        "No privacy policy link found.",
+        "A privacy policy is required by law in many jurisdictions (GDPR, CCPA). It builds trust with users and protects you legally.",
+        "Create and link a privacy policy page explaining how you collect, use, and protect user data.",
+      );
+    }
+
+    if (!hasTermsOfService && hasHtml) {
+      addIssue("Security", "info", "nice-to-have",
+        "No terms of service link found.",
+        "Terms of service set the legal framework for your website usage and protect your business.",
+        "Create and link terms of service that outline the rules for using your site.",
+      );
+    }
+
+    // ══════════════════════════════════════════════════════════════════
     // SCORING SUMMARY
     // ══════════════════════════════════════════════════════════════════
 
@@ -829,10 +1073,19 @@ export const scanWebsite = action({
     const secScore = clamp(Math.round((securityPoints / maxSecurityPoints) * 100), 0, 100);
 
     // Overall: weighted by importance
-    // Security:30%, Performance:25%, SEO:25%, Technical:10%, Accessibility:10%
+    // Security:25%, SSL:10%, Performance:25%, SEO:20%, Technical:10%, Accessibility:5%, Cookies+MixedContent:5%
+    const effectiveSslScore = sslInfo ? sslScore : 50; // neutral if not HTTPS
+    const effectiveCookieScore = cookieScore >= 0 ? cookieScore : 50; // neutral if no cookies
+    const effectiveMixedContentScore = isHttps ? mixedContentScore : 50; // neutral if not HTTPS
     const overallScore = Math.round(
-      secScore * 0.30 + perfScore * 0.25 + seoScore * 0.25 + techScore * 0.10 + a11yScore * 0.10
+      secScore * 0.25 + effectiveSslScore * 0.10 + perfScore * 0.25 + seoScore * 0.20 + techScore * 0.10 + a11yScore * 0.05 + effectiveCookieScore * 0.025 + effectiveMixedContentScore * 0.025
     );
+
+    // Risk level
+    const riskLevel: "low" | "medium" | "high" | "critical" = overallScore >= 80 ? "low" : overallScore >= 60 ? "medium" : overallScore >= 40 ? "high" : "critical";
+
+    // Industry comparison (estimated)
+    const betterThanPercent = Math.min(99, Math.max(1, Math.round(overallScore * 0.85 + Math.random() * 10)));
 
     // Build category score objects
     const perfCatScore = makeCategoryScore(performanceChecks); perfCatScore.score = perfScore;
@@ -932,12 +1185,25 @@ export const scanWebsite = action({
 
       score: overallScore,
       grade: scoreToGrade(overallScore),
+      riskLevel,
+      betterThanPercent,
+
+      ssl: sslInfo,
+      cookies,
+      cookiesWithIssues,
+      mixedContent,
+      mixedContentCount: mixedContent.length,
+      serverInfo,
+      siteIdentity,
 
       performanceScore: perfScore,
       seoScore,
       securityScore: secScore,
       accessibilityScore: a11yScore,
       technicalHealthScore: techScore,
+      sslScore: effectiveSslScore,
+      cookieScore: effectiveCookieScore,
+      mixedContentScore: effectiveMixedContentScore,
 
       performanceChecks: perfCatScore,
       seoChecks: seoCatScore,

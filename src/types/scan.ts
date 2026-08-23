@@ -1,9 +1,7 @@
 // Shared type definitions for SitePulse scan results
 
 export type Severity = "critical" | "warning" | "info";
-
 export type Priority = "critical" | "important" | "recommended" | "nice-to-have";
-
 export type CheckResult = "pass" | "fail" | "warn" | "not-checked";
 
 export interface Issue {
@@ -30,6 +28,44 @@ export interface QuickWin {
   priority: Priority;
 }
 
+export interface SSLInfo {
+  valid: boolean;
+  issuer: string;
+  expiryDate: string;
+  daysUntilExpiry: number;
+  serialNumber: string;
+  subjectAltNames: string[];
+}
+
+export interface CookieInfo {
+  name: string;
+  httpOnly: boolean;
+  secure: boolean;
+  sameSite: string | null;
+  domain: string | null;
+}
+
+export interface MixedContent {
+  url: string;
+  type: "script" | "image" | "stylesheet" | "other";
+  lineNumber: number;
+}
+
+export interface ServerInfo {
+  server: string | null;
+  poweredBy: string | null;
+  technology: string[];
+  framework: string | null;
+}
+
+export interface SiteIdentity {
+  hasPrivacyPolicy: boolean;
+  hasTermsOfService: boolean;
+  hasContactInfo: boolean;
+  hasOrganization: boolean;
+  organizationName: string | null;
+}
+
 export interface ScanResult {
   url: string;
   finalUrl: string;
@@ -54,8 +90,8 @@ export interface ScanResult {
   headingStructure: string;
   canonicalUrl?: string;
   hasRobotsMeta: boolean;
-  robotsTxtAvailable: boolean | null;
-  sitemapXmlAvailable: boolean | null;
+  robotsTxtAvailable?: boolean;
+  sitemapXmlAvailable?: boolean;
 
   // Content
   imageCount: number;
@@ -77,17 +113,38 @@ export interface ScanResult {
   hasReferrerPolicy: boolean;
   hasPermissionsPolicy: boolean;
 
+  // SSL
+  ssl: SSLInfo | null;
+
+  // Cookies
+  cookies: CookieInfo[];
+  cookiesWithIssues: number;
+
+  // Mixed content
+  mixedContent: MixedContent[];
+  mixedContentCount: number;
+
+  // Server info
+  serverInfo: ServerInfo;
+
+  // Site identity
+  siteIdentity: SiteIdentity;
+
   // Health score & grade
   score: number;
   grade: string;
+  riskLevel: "low" | "medium" | "high" | "critical";
+  betterThanPercent: number;
 
   // Category scores
-  overallScore: number;
   performanceScore: number;
   seoScore: number;
   securityScore: number;
   accessibilityScore: number;
   technicalHealthScore: number;
+  sslScore: number;
+  cookieScore: number;
+  mixedContentScore: number;
 
   // Checks tracking
   performanceChecks: CategoryScore;

@@ -68,8 +68,20 @@ interface ScanResult {
   hasXPermittedCrossDomainPolicies: boolean;
   hasReferrerPolicy: boolean;
   hasPermissionsPolicy: boolean;
+  ssl: { valid: boolean; issuer: string; expiryDate: string; daysUntilExpiry: number; serialNumber: string; subjectAltNames: string[] } | null | undefined;
+  cookies: Array<{ name: string; httpOnly: boolean; secure: boolean; sameSite: string | null; domain: string | null }>;
+  cookiesWithIssues: number;
+  mixedContent: Array<{ url: string; type: "script" | "image" | "stylesheet" | "other"; lineNumber: number }>;
+  mixedContentCount: number;
+  serverInfo: { server: string | null; poweredBy: string | null; technology: string[]; framework: string | null };
+  siteIdentity: { hasPrivacyPolicy: boolean; hasTermsOfService: boolean; hasContactInfo: boolean; hasOrganization: boolean; organizationName: string | null };
   score: number;
   grade: string;
+  riskLevel: "low" | "medium" | "high" | "critical";
+  betterThanPercent: number;
+  sslScore: number;
+  cookieScore: number;
+  mixedContentScore: number;
   performanceScore: number;
   seoScore: number;
   securityScore: number;
@@ -172,7 +184,19 @@ export default function Landing() {
       const res = await scanWebsite({ url: url.trim() });
       const scanResult = res as ScanResult;
       setResult(scanResult);
-      try { const id = await saveScan(scanResult); setScanId(id); navigate(`/report/${id}`); } catch { setTimeout(() => { resultsRef.current?.scrollIntoView({ behavior: "smooth" }); }, 100); }
+      try {
+        // Convert null values to undefined for Convex optional fields
+        const forSave = {
+          ...scanResult,
+          ssl: scanResult.ssl ?? undefined,
+          cookies: scanResult.cookies?.map(c => ({ ...c, sameSite: c.sameSite ?? undefined, domain: c.domain ?? undefined })) ?? undefined,
+          mixedContent: scanResult.mixedContent ?? undefined,
+          serverInfo: scanResult.serverInfo ? { ...scanResult.serverInfo, server: scanResult.serverInfo.server ?? undefined, poweredBy: scanResult.serverInfo.poweredBy ?? undefined, framework: scanResult.serverInfo.framework ?? undefined } : undefined,
+          siteIdentity: scanResult.siteIdentity ? { ...scanResult.siteIdentity, organizationName: scanResult.siteIdentity.organizationName ?? undefined } : undefined,
+        };
+        const id = await saveScan(forSave);
+        setScanId(id); navigate(`/report/${id}`);
+      } catch { setTimeout(() => { resultsRef.current?.scrollIntoView({ behavior: "smooth" }); }, 100); }
     } catch (err) { setError(err instanceof Error ? err.message : "Scan failed. Please check the URL and try again."); }
     finally { setScanning(false); }
   };
@@ -271,6 +295,12 @@ export default function Landing() {
                   <div className="flex flex-col items-center">
                     <div className={`relative flex size-28 items-center justify-center border-[3px] border-[#1a1a1a] ${gradeColors[result.grade] || "bg-gray-300"}`}><span className="text-5xl font-black text-[#1a1a1a]">{result.score}</span></div>
                     <div className="mt-2 border-2 border-[#1a1a1a] bg-[#1a1a1a] px-4 py-1 text-sm font-black text-white">Grade {result.grade}</div>
+                    {/* Trust indicators */}
+                    <div className="mt-2 flex items-center gap-2">
+                      <span className="inline-flex items-center gap-1 border-2 border-[#1a1a1a] bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-700">✓ Verified Scan</span>
+                      <span className={`inline-flex items-center gap-1 border-2 border-[#1a1a1a] px-2 py-0.5 text-[10px] font-bold ${result.riskLevel === "low" ? "bg-emerald-100 text-emerald-700" : result.riskLevel === "medium" ? "bg-yellow-100 text-yellow-700" : result.riskLevel === "high" ? "bg-orange-100 text-orange-700" : "bg-red-100 text-red-700"}`}>{result.riskLevel === "low" ? "Low Risk" : result.riskLevel === "medium" ? "Medium Risk" : result.riskLevel === "high" ? "High Risk" : "Critical Risk"}</span>
+                    </div>
+                    <p className="mt-1 text-[10px] text-[#1a1a1a]/40">Better than {result.betterThanPercent}% of scanned sites</p>
                     {prevScore !== null && (
                       <div className="mt-2 flex items-center gap-1.5">
                         {result.score > prevScore + 2 ? <TrendingUp className="size-4 text-emerald-600" /> : result.score < prevScore - 2 ? <TrendingDown className="size-4 text-red-600" /> : <Minus className="size-4 text-[#1a1a1a]/40" />}

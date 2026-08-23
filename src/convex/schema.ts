@@ -2,7 +2,6 @@ import { authTables } from "@convex-dev/auth/server";
 import { defineSchema, defineTable } from "convex/server";
 import { Infer, v } from "convex/values";
 
-// default user roles. can add / remove based on the project as needed
 export const ROLES = {
   ADMIN: "admin",
   USER: "user",
@@ -26,17 +25,8 @@ const categoryScoreValidator = v.object({
 
 const issueValidator = v.object({
   category: v.string(),
-  severity: v.union(
-    v.literal("critical"),
-    v.literal("warning"),
-    v.literal("info"),
-  ),
-  priority: v.union(
-    v.literal("critical"),
-    v.literal("important"),
-    v.literal("recommended"),
-    v.literal("nice-to-have"),
-  ),
+  severity: v.union(v.literal("critical"), v.literal("warning"), v.literal("info")),
+  priority: v.union(v.literal("critical"), v.literal("important"), v.literal("recommended"), v.literal("nice-to-have")),
   message: v.string(),
   whyItMatters: v.string(),
   howToFix: v.string(),
@@ -46,31 +36,60 @@ const quickWinValidator = v.object({
   category: v.string(),
   message: v.string(),
   potentialGain: v.number(),
-  priority: v.union(
-    v.literal("critical"),
-    v.literal("important"),
-    v.literal("recommended"),
-    v.literal("nice-to-have"),
-  ),
+  priority: v.union(v.literal("critical"), v.literal("important"), v.literal("recommended"), v.literal("nice-to-have")),
+});
+
+const sslInfoValidator = v.object({
+  valid: v.boolean(),
+  issuer: v.string(),
+  expiryDate: v.string(),
+  daysUntilExpiry: v.number(),
+  serialNumber: v.string(),
+  subjectAltNames: v.array(v.string()),
+});
+
+const cookieInfoValidator = v.object({
+  name: v.string(),
+  httpOnly: v.boolean(),
+  secure: v.boolean(),
+  sameSite: v.optional(v.string()),
+  domain: v.optional(v.string()),
+});
+
+const mixedContentValidator = v.object({
+  url: v.string(),
+  type: v.union(v.literal("script"), v.literal("image"), v.literal("stylesheet"), v.literal("other")),
+  lineNumber: v.number(),
+});
+
+const serverInfoValidator = v.object({
+  server: v.optional(v.string()),
+  poweredBy: v.optional(v.string()),
+  technology: v.array(v.string()),
+  framework: v.optional(v.string()),
+});
+
+const siteIdentityValidator = v.object({
+  hasPrivacyPolicy: v.boolean(),
+  hasTermsOfService: v.boolean(),
+  hasContactInfo: v.boolean(),
+  hasOrganization: v.boolean(),
+  organizationName: v.optional(v.string()),
 });
 
 const schema = defineSchema(
   {
-    // default auth tables using convex auth.
-    ...authTables, // do not remove or modify
+    ...authTables,
 
-    // the users table is the default users table that is brought in by the authTables
     users: defineTable({
-      name: v.optional(v.string()), // name of the user. do not remove
-      image: v.optional(v.string()), // image of the user. do not remove
-      email: v.optional(v.string()), // email of the user. do not remove
-      emailVerificationTime: v.optional(v.number()), // email verification time. do not remove
-      isAnonymous: v.optional(v.boolean()), // is the user anonymous. do not remove
+      name: v.optional(v.string()),
+      image: v.optional(v.string()),
+      email: v.optional(v.string()),
+      emailVerificationTime: v.optional(v.number()),
+      isAnonymous: v.optional(v.boolean()),
+      role: v.optional(roleValidator),
+    }).index("email", ["email"]),
 
-      role: v.optional(roleValidator), // role of the user. do not remove
-    }).index("email", ["email"]), // index for the email. do not remove or modify
-
-    // SitePulse scan results
     scans: defineTable({
       url: v.string(),
       finalUrl: v.string(),
@@ -82,7 +101,6 @@ const schema = defineSchema(
       pageSize: v.number(),
       pageSizeFormatted: v.string(),
 
-      // SEO
       title: v.optional(v.string()),
       titleLength: v.optional(v.number()),
       description: v.optional(v.string()),
@@ -98,7 +116,6 @@ const schema = defineSchema(
       robotsTxtAvailable: v.optional(v.boolean()),
       sitemapXmlAvailable: v.optional(v.boolean()),
 
-      // Content
       imageCount: v.number(),
       imagesWithoutAlt: v.number(),
       linkCount: v.number(),
@@ -109,7 +126,6 @@ const schema = defineSchema(
       formInputCount: v.optional(v.number()),
       inputsWithoutLabels: v.optional(v.number()),
 
-      // Security headers
       hasCSP: v.boolean(),
       hasXFrameOptions: v.boolean(),
       hasXContentTypeOptions: v.boolean(),
@@ -118,42 +134,48 @@ const schema = defineSchema(
       hasReferrerPolicy: v.boolean(),
       hasPermissionsPolicy: v.boolean(),
 
-      // Health score & grade (consumed by UI)
+      ssl: v.optional(sslInfoValidator),
+      cookies: v.optional(v.array(cookieInfoValidator)),
+      cookiesWithIssues: v.optional(v.number()),
+      mixedContent: v.optional(v.array(mixedContentValidator)),
+      mixedContentCount: v.optional(v.number()),
+      serverInfo: v.optional(serverInfoValidator),
+      siteIdentity: v.optional(siteIdentityValidator),
+
       score: v.number(),
       grade: v.string(),
+      riskLevel: v.optional(v.union(v.literal("low"), v.literal("medium"), v.literal("high"), v.literal("critical"))),
+      betterThanPercent: v.optional(v.number()),
 
-      // Category scores
-      overallScore: v.optional(v.number()),
-      performanceScore: v.optional(v.number()),
-      seoScore: v.optional(v.number()),
-      securityScore: v.optional(v.number()),
-      accessibilityScore: v.optional(v.number()),
-      technicalHealthScore: v.optional(v.number()),
+      performanceScore: v.number(),
+      seoScore: v.number(),
+      securityScore: v.number(),
+      accessibilityScore: v.number(),
+      technicalHealthScore: v.number(),
+      sslScore: v.optional(v.number()),
+      cookieScore: v.optional(v.number()),
+      mixedContentScore: v.optional(v.number()),
 
-      // Checks tracking
-      performanceChecks: v.optional(categoryScoreValidator),
-      seoChecks: v.optional(categoryScoreValidator),
-      securityChecks: v.optional(categoryScoreValidator),
-      accessibilityChecks: v.optional(categoryScoreValidator),
-      technicalHealthChecks: v.optional(categoryScoreValidator),
+      performanceChecks: categoryScoreValidator,
+      seoChecks: categoryScoreValidator,
+      securityChecks: categoryScoreValidator,
+      accessibilityChecks: categoryScoreValidator,
+      technicalHealthChecks: categoryScoreValidator,
 
-      // Issues
       issues: v.array(issueValidator),
-      topIssues: v.optional(v.array(issueValidator)),
-      quickWins: v.optional(v.array(quickWinValidator)),
-      totalChecksCompleted: v.optional(v.number()),
-      totalPassed: v.optional(v.number()),
-      totalFailed: v.optional(v.number()),
-      totalWarnings: v.optional(v.number()),
+      topIssues: v.array(issueValidator),
+      quickWins: v.array(quickWinValidator),
+      totalChecksCompleted: v.number(),
+      totalPassed: v.number(),
+      totalFailed: v.number(),
+      totalWarnings: v.number(),
 
       scannedAt: v.number(),
     })
       .index("by_url", ["url"])
       .index("by_scanned_at", ["scannedAt"]),
   },
-  {
-    schemaValidation: false,
-  },
+  { schemaValidation: false },
 );
 
 export default schema;
