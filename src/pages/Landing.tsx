@@ -249,6 +249,7 @@ export default function Landing() {
       {!result && !scanning && (
         <section className="border-b-2 border-[#1a1a1a] bg-white">
           <div className="mx-auto max-w-6xl px-4 py-16 sm:px-6">
+            <h2 className="mb-8 text-center text-2xl font-black tracking-tight sm:text-3xl">What We Check</h2>
             <div className="grid grid-cols-1 gap-0 sm:grid-cols-5">
               {[
                 { icon: Zap, title: "Performance", desc: "Response time, page size, and loading efficiency.", color: "bg-[#D1FAE5]" },
