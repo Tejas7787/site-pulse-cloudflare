@@ -10,20 +10,33 @@
   <title>SitePulse - Free Website Security &amp; Health Scanner</title>
   <meta name="description"
     content="Scan any website for security vulnerabilities, SEO issues, and performance problems. Get a free health report in seconds." />
-  <!-- Canonical URL is set at runtime so it always matches the deployed domain -->
-  <link rel="canonical" id="canonical-link" href="https://sitepulse.pages.dev/" />
+  <!-- Canonical URL defaults to production; corrected at runtime for other domains -->
+  <link rel="canonical" id="canonical-link" href="https://sitepulse.freebuff.app/" />
   <script>
     document.getElementById("canonical-link").href = window.location.origin + "/";
   </script>
+  <!-- Open Graph -->
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="SitePulse" />
+  <meta property="og:url" content="https://sitepulse.freebuff.app/" />
+  <meta property="og:title" content="SitePulse — Free Website Health Checker" />
+  <meta property="og:description" content="Scan any website for security vulnerabilities, SEO issues, and performance problems. Get a free health report in seconds." />
+  <meta property="og:image" content="https://sitepulse.freebuff.app/logo.svg" />
+  <!-- Twitter/X card -->
+  <meta name="twitter:card" content="summary" />
+  <meta name="twitter:title" content="SitePulse — Free Website Health Checker" />
+  <meta name="twitter:description" content="Scan any website for security vulnerabilities, SEO issues, and performance problems. Get a free health report in seconds." />
+  <meta name="twitter:image" content="https://sitepulse.freebuff.app/logo.svg" />
+  <meta name="theme-color" content="#FFFBF0" />
   <!-- Security header fallbacks (full HTTP headers are also declared in public/_headers) -->
   <meta http-equiv="Content-Security-Policy"
-    content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.convex.cloud; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self' https://*.convex.cloud wss://*.convex.cloud; base-uri 'self'; form-action 'self'" />
+    content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.convex.cloud; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data: https://fonts.gstatic.com; connect-src 'self' https://*.convex.cloud wss://*.convex.cloud; base-uri 'self'; form-action 'self'; frame-ancestors 'none'" />
   <meta name="referrer" content="strict-origin-when-cross-origin" />
-  <script type="module" crossorigin src="/assets/index-nhLy4jG0.js"></script>
+  <script type="module" crossorigin src="/assets/index-BXkjfo_f.js"></script>
   <link rel="modulepreload" crossorigin href="/assets/react-vendor-yijSofTl.js">
   <link rel="modulepreload" crossorigin href="/assets/framer-motion-pgkiS-PG.js">
   <link rel="modulepreload" crossorigin href="/assets/radix-ui-CRbQ5wQc.js">
-  <link rel="stylesheet" crossorigin href="/assets/index-DzrW3e6T.css">
+  <link rel="stylesheet" crossorigin href="/assets/index-DP9jLsgf.css">
 </head>
 
 
