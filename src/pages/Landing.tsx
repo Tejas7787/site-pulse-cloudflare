@@ -240,7 +240,8 @@ export default function Landing() {
             <div className="mx-auto flex max-w-xl flex-col gap-0 border-2 border-[#1a1a1a] shadow-[4px_4px_0px_0px_#1a1a1a] sm:flex-row">
               <div className="relative flex-1">
                 <Globe className="absolute left-3 top-1/2 size-5 -translate-y-1/2 text-[#1a1a1a]/40" />
-                <input type="url" placeholder="https://example.com" value={url} onChange={(e) => setUrl(e.target.value)} onKeyDown={handleKeyDown} disabled={scanning} className="h-14 w-full border-b-2 border-[#1a1a1a] bg-white px-4 pl-11 text-base font-medium outline-none placeholder:text-[#1a1a1a]/30 sm:border-b-0 sm:border-r-2 sm:border-l-0" />
+                <label htmlFor="website-url" className="sr-only">Website URL to scan</label>
+                <input id="website-url" type="url" autoComplete="url" inputMode="url" aria-label="Website URL to scan" placeholder="https://example.com" value={url} onChange={(e) => setUrl(e.target.value)} onKeyDown={handleKeyDown} disabled={scanning} className="h-14 w-full border-b-2 border-[#1a1a1a] bg-white px-4 pl-11 text-base font-medium outline-none placeholder:text-[#1a1a1a]/30 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#FDE68A] sm:border-b-0 sm:border-r-2 sm:border-l-0" />
               </div>
               <button onClick={handleScan} disabled={scanning || !url.trim()} className="flex h-14 items-center justify-center gap-2 border-0 bg-[#FDE68A] px-6 text-base font-black text-[#1a1a1a] transition-colors hover:bg-[#FCD34D] disabled:cursor-not-allowed disabled:opacity-50">
                 {scanning ? (<><Loader2 className="size-5 animate-spin" />Scanning...</>) : (<><Search className="size-5" />Scan Website</>)}
@@ -318,7 +319,7 @@ export default function Landing() {
                   </div>
                   <div className="flex-1 text-center sm:text-left">
                     <h2 className="text-2xl font-black sm:text-3xl">Your Health Report</h2>
-                    <div className="mt-1.5 flex items-center gap-2 justify-center sm:justify-start"><Globe className="size-4 text-[#1a1a1a]/40" /><span className="text-sm text-[#1a1a1a]/60 break-all font-medium">{result.url}</span><a href={result.url} target="_blank" rel="noopener noreferrer" className="shrink-0 text-[#1a1a1a]/40 hover:text-[#1a1a1a] transition-colors"><ExternalLink className="size-4" /></a></div>
+                    <div className="mt-1.5 flex items-center gap-2 justify-center sm:justify-start"><Globe className="size-4 text-[#1a1a1a]/40" /><span className="text-sm text-[#1a1a1a]/60 break-all font-medium">{result.url}</span><a href={result.url} target="_blank" rel="noopener noreferrer" aria-label={`Open ${result.url} in a new tab`} className="shrink-0 rounded-sm text-[#1a1a1a]/40 transition-colors hover:text-[#1a1a1a] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#1a1a1a]"><ExternalLink className="size-4" aria-hidden="true" /></a></div>
                     <div className="mt-4 flex flex-wrap gap-2 justify-center sm:justify-start">
                       <StatusPill ok={result.status >= 200 && result.status < 400} label={`HTTP ${result.status}`} />
                       <StatusPill ok={result.https} label={result.https ? "HTTPS" : "No HTTPS"} />
@@ -457,9 +458,9 @@ function IssueGroup({ category, issues }: { category: string; issues: ScanResult
   const CatIcon = categoryIcons[category] || Globe;
   return (
     <div className="border-2 border-[#1a1a1a] bg-[#FFFBF0]">
-      <button onClick={() => setOpen(!open)} className="flex w-full items-center justify-between px-4 py-3 text-left">
+      <button onClick={() => setOpen(!open)} aria-expanded={open} className="flex w-full items-center justify-between px-4 py-3 text-left">
         <div className="flex items-center gap-3">
-          <div className="flex size-7 items-center justify-center border border-[#1a1a1a]/20 bg-white"><CatIcon className="size-3.5" /></div>
+          <div className="flex size-7 items-center justify-center border border-[#1a1a1a]/20 bg-white" aria-hidden="true"><CatIcon className="size-3.5" /></div>
           <span className="font-black">{category}</span>
           <div className="flex gap-1.5">
             {criticalCount > 0 && <span className="border border-red-300 bg-red-100 px-1.5 py-0.5 text-[10px] font-bold text-red-600">{criticalCount} critical</span>}
@@ -497,8 +498,8 @@ function IssueDetail({ issue }: { issue: ScanResult["issues"][0] }) {
           </div>
           <p className="mt-0.5 text-sm leading-relaxed text-[#1a1a1a]/80">{issue.message}</p>
         </div>
-        <button onClick={() => setExpanded(!expanded)} className="shrink-0 mt-0.5 text-[#1a1a1a]/30 hover:text-[#1a1a1a]/60 transition-colors">
-          {expanded ? <ChevronUp className="size-4" /> : <ChevronDown className="size-4" />}
+        <button onClick={() => setExpanded(!expanded)} aria-expanded={expanded} aria-label={expanded ? "Collapse issue details" : "Expand issue details"} className="shrink-0 mt-0.5 rounded-sm p-1 text-[#1a1a1a]/30 transition-colors hover:text-[#1a1a1a]/60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#1a1a1a]">
+          {expanded ? <ChevronUp className="size-4" aria-hidden="true" /> : <ChevronDown className="size-4" aria-hidden="true" />}
         </button>
       </div>
       <AnimatePresence>

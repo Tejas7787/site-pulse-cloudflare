@@ -1066,26 +1066,54 @@ export const scanWebsite = action({
     // Performance: weighted average (response time 50%, page size 30%, http status 20%)
     const perfScore = Math.round(rtScore * 0.5 + psScore * 0.3 + (performanceChecks["http-status"] === "pass" ? 100 : performanceChecks["http-status"] === "warn" ? 60 : 0) * 0.2);
 
-    // SEO: weighted average
-    const seoScore = Math.round(titleScore * 0.25 + descScore * 0.25 + h1Score * 0.2 + headingScore * 0.1 + (seoChecks["canonical-tag"] === "pass" ? 100 : 50) * 0.1 + (seoChecks["robots-meta"] === "pass" ? 100 : 0) * 0.1);
+    // SEO: weighted average across every check shown in the SEO category.
+    // Weights: title .20, description .20, H1 .15, headings .10, canonical .10,
+    // robots meta .05, robots.txt .10, sitemap.xml .10 (= 1.00).
+    // Checks that could not be performed count as neutral (50) so unreachable
+    // lookups neither reward nor punish.
+    const robotsTxtCheckScore = seoChecks["robots-txt"] === "pass" ? 100 : seoChecks["robots-txt"] === "not-checked" ? 50 : 0;
+    const sitemapXmlCheckScore = seoChecks["sitemap-xml"] === "pass" ? 100 : seoChecks["sitemap-xml"] === "not-checked" ? 50 : 0;
+    const seoScore = Math.round(
+      titleScore * 0.20 +
+      descScore * 0.20 +
+      h1Score * 0.15 +
+      headingScore * 0.10 +
+      (seoChecks["canonical-tag"] === "pass" ? 100 : 50) * 0.10 +
+      (seoChecks["robots-meta"] === "pass" ? 100 : 0) * 0.05 +
+      robotsTxtCheckScore * 0.10 +
+      sitemapXmlCheckScore * 0.10
+    );
 
-    // Security: points-based, capped at 100
-    const secScore = clamp(Math.round((securityPoints / maxSecurityPoints) * 100), 0, 100);
+    // Security headers: points-based, capped at 100
+    const headerSecScore = clamp(Math.round((securityPoints / maxSecurityPoints) * 100), 0, 100);
 
-    // Overall: weighted by importance
-    // Security:25%, SSL:10%, Performance:25%, SEO:20%, Technical:10%, Accessibility:5%, Cookies+MixedContent:5%
+    // Sub-checks that cannot apply use a neutral 50 so they neither reward nor punish.
     const effectiveSslScore = sslInfo ? sslScore : 50; // neutral if not HTTPS
     const effectiveCookieScore = cookieScore >= 0 ? cookieScore : 50; // neutral if no cookies
     const effectiveMixedContentScore = isHttps ? mixedContentScore : 50; // neutral if not HTTPS
+
+    // The Security category combines its four sub-areas with fixed weights:
+    // headers 55%, SSL certificate 20%, cookie flags 12.5%, mixed content 12.5%.
+    const secScore = Math.round(
+      headerSecScore * 0.55 +
+      effectiveSslScore * 0.20 +
+      effectiveCookieScore * 0.125 +
+      effectiveMixedContentScore * 0.125
+    );
+
+    // Overall: weighted by importance — exactly matching the weights shown on
+    // the report page: Security 30%, Performance 25%, SEO 25%,
+    // Technical Health 10%, Accessibility 10%. No other inputs.
     const overallScore = Math.round(
-      secScore * 0.25 + effectiveSslScore * 0.10 + perfScore * 0.25 + seoScore * 0.20 + techScore * 0.10 + a11yScore * 0.05 + effectiveCookieScore * 0.025 + effectiveMixedContentScore * 0.025
+      secScore * 0.30 + perfScore * 0.25 + seoScore * 0.25 + techScore * 0.10 + a11yScore * 0.10
     );
 
     // Risk level
     const riskLevel: "low" | "medium" | "high" | "critical" = overallScore >= 80 ? "low" : overallScore >= 60 ? "medium" : overallScore >= 40 ? "high" : "critical";
 
-    // Industry comparison (estimated)
-    const betterThanPercent = Math.min(99, Math.max(1, Math.round(overallScore * 0.85 + Math.random() * 10)));
+    // Industry comparison (deterministic estimate derived from the score itself,
+    // so identical results always display identically)
+    const betterThanPercent = Math.min(99, Math.max(1, Math.round(overallScore * 0.9)));
 
     // Build category score objects
     const perfCatScore = makeCategoryScore(performanceChecks); perfCatScore.score = perfScore;
@@ -1116,10 +1144,8 @@ export const scanWebsite = action({
       .filter((issue) => issue.priority !== "critical")
       .slice(0, 5)
       .map((issue) => {
-        // Estimate potential gain based on priority
-        const potentialGain = issue.priority === "important" ? Math.round(Math.random() * 5 + 8)
-          : issue.priority === "recommended" ? Math.round(Math.random() * 4 + 4)
-          : Math.round(Math.random() * 3 + 2);
+        // Deterministic potential-gain estimates based on priority band
+        const potentialGain = issue.priority === "important" ? 10 : issue.priority === "recommended" ? 6 : 3;
         return {
           category: issue.category,
           message: issue.message,
