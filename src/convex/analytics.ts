@@ -97,7 +97,8 @@ export type DashboardData = {
 export const getDashboard = query({
   args: { passcode: v.string() },
   handler: async (ctx, args): Promise<DashboardData | { authorized: false }> => {
-    const expected = process.env.ANALYTICS_ADMIN_PASSCODE;
+    const expected =
+      process.env.SITEPULSE_ADMIN_PASSWORD ?? process.env.ANALYTICS_ADMIN_PASSCODE;
     if (!expected || expected.length < 8) return { authorized: false };
     // Constant-time-ish comparison to avoid trivial timing leaks.
     if (

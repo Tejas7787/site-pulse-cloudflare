@@ -153,7 +153,7 @@ export default function Admin() {
           <XCircle className="mx-auto mb-3 size-10 text-red-600" aria-hidden="true" />
           <h1 className="text-lg font-black">Access denied</h1>
           <p className="mt-1 mb-4 text-sm text-[#1a1a1a]/60">
-            That passcode is not valid, or the ANALYTICS_ADMIN_PASSCODE environment variable is not configured on the Convex deployment.
+            That passcode is not valid, or the SITEPULSE_ADMIN_PASSWORD environment variable is not configured on the Convex deployment.
           </p>
           <button
             onClick={() => { try { window.sessionStorage.removeItem(PC_KEY); } catch { /* ignore */ } setPasscode(""); }}
