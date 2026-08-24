@@ -153,6 +153,19 @@ function saveScoreToHistory(domain: string, entry: ScoreEntry) {
   try { const raw = localStorage.getItem("sitepulse_history"); const all = raw ? JSON.parse(raw) as Record<string, ScoreEntry[]> : {}; const existing = all[domain] || []; all[domain] = [entry, ...existing.filter((e) => e.scannedAt !== entry.scannedAt)].slice(0, 5); localStorage.setItem("sitepulse_history", JSON.stringify(all)); } catch {}
 }
 
+// Recursively convert null values to undefined so they satisfy Convex's
+// v.optional(...) validators, which reject null but accept missing/undefined.
+function nullsToUndefined<T>(value: T): T {
+  if (value === null) return undefined as T;
+  if (Array.isArray(value)) return value.map((item) => nullsToUndefined(item)) as T;
+  if (typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [key, val] of Object.entries(value as Record<string, unknown>)) out[key] = nullsToUndefined(val);
+    return out as T;
+  }
+  return value;
+}
+
 export default function Landing() {
   const [url, setUrl] = useState("");
   const [scanning, setScanning] = useState(false);
@@ -185,15 +198,8 @@ export default function Landing() {
       const scanResult = res as ScanResult;
       setResult(scanResult);
       try {
-        // Convert null values to undefined for Convex optional fields
-        const forSave = {
-          ...scanResult,
-          ssl: scanResult.ssl ?? undefined,
-          cookies: scanResult.cookies?.map(c => ({ ...c, sameSite: c.sameSite ?? undefined, domain: c.domain ?? undefined })) ?? undefined,
-          mixedContent: scanResult.mixedContent ?? undefined,
-          serverInfo: scanResult.serverInfo ? { ...scanResult.serverInfo, server: scanResult.serverInfo.server ?? undefined, poweredBy: scanResult.serverInfo.poweredBy ?? undefined, framework: scanResult.serverInfo.framework ?? undefined } : undefined,
-          siteIdentity: scanResult.siteIdentity ? { ...scanResult.siteIdentity, organizationName: scanResult.siteIdentity.organizationName ?? undefined } : undefined,
-        };
+        // Deeply convert null values to undefined for Convex optional fields
+        const forSave = nullsToUndefined(scanResult) as Parameters<typeof saveScan>[0];
         const id = await saveScan(forSave);
         setScanId(id); navigate(`/report/${id}`);
       } catch { setTimeout(() => { resultsRef.current?.scrollIntoView({ behavior: "smooth" }); }, 100); }
@@ -201,8 +207,7 @@ export default function Landing() {
     finally { setScanning(false); }
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent) => { if (e.key === "Enter" && !scanning) handleScan(); };
-  const handleShare = async () => { if (!scanId) return; try { await navigator.clipboard.writeText(`${window.location.origin}/report/${scanId}`); setCopied(true); setTimeout(() => setCopied(false), 2000); } catch {} };
+  const handleKeyDown = (e: React.KeyboardEvent) => { if (e.key === "Enter" && !scanning) handleScan(); };  const handleShare = async () => { if (!scanId) return; try { await navigator.clipboard.writeText(`${window.location.origin}/report/${scanId}`); setCopied(true); setTimeout(() => setCopied(false), 2000); } catch {} };
   const handleViewFullReport = () => { if (scanId) navigate(`/report/${scanId}`); };
 
   const issuesByCategory: Record<string, ScanResult["issues"]> = (result?.issues ?? []).reduce(
