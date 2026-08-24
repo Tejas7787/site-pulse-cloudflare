@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { useAction, useMutation } from "convex/react";
 import { api } from "../convex/_generated/api";
+import { trackEvent } from "../lib/analytics";
 import { motion, AnimatePresence } from "framer-motion";
 import { useNavigate } from "react-router";
 import {
@@ -192,6 +193,7 @@ export default function Landing() {
 
   const handleScan = async () => {
     if (!url.trim()) return;
+    trackEvent("scan_started", { targetUrl: url.trim() });
     setScanning(true); setError(null); setResult(null); setScanId(null); setPrevScore(null);
     try {
       const res = await scanWebsite({ url: url.trim() });
@@ -201,13 +203,18 @@ export default function Landing() {
         // Deeply convert null values to undefined for Convex optional fields
         const forSave = nullsToUndefined(scanResult) as Parameters<typeof saveScan>[0];
         const id = await saveScan(forSave);
-        setScanId(id); navigate(`/report/${id}`);
+        setScanId(id);
+        trackEvent("scan_completed", { targetUrl: scanResult.url });
+        navigate(`/report/${id}`);
       } catch { setTimeout(() => { resultsRef.current?.scrollIntoView({ behavior: "smooth" }); }, 100); }
-    } catch (err) { setError(err instanceof Error ? err.message : "Scan failed. Please check the URL and try again."); }
+    } catch (err) {
+      trackEvent("scan_failed");
+      setError(err instanceof Error ? err.message : "Scan failed. Please check the URL and try again.");
+    }
     finally { setScanning(false); }
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent) => { if (e.key === "Enter" && !scanning) handleScan(); };  const handleShare = async () => { if (!scanId) return; try { await navigator.clipboard.writeText(`${window.location.origin}/report/${scanId}`); setCopied(true); setTimeout(() => setCopied(false), 2000); } catch {} };
+  const handleKeyDown = (e: React.KeyboardEvent) => { if (e.key === "Enter" && !scanning) handleScan(); };  const handleShare = async () => { if (!scanId) return; trackEvent("share_report_clicked"); try { await navigator.clipboard.writeText(`${window.location.origin}/report/${scanId}`); setCopied(true); setTimeout(() => setCopied(false), 2000); } catch {} };
   const handleViewFullReport = () => { if (scanId) navigate(`/report/${scanId}`); };
 
   const issuesByCategory: Record<string, ScanResult["issues"]> = (result?.issues ?? []).reduce(

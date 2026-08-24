@@ -1,6 +1,7 @@
 import { useParams, Link } from "react-router";
 import { useQuery } from "convex/react";
 import { api } from "../convex/_generated/api";
+import { trackEvent } from "../lib/analytics";
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import type { Id } from "../convex/_generated/dataModel";
@@ -162,6 +163,15 @@ export default function Report() {
   const [prevScore, setPrevScore] = useState<number | null>(null);
   const scan = useQuery(api.scans.getScan, id ? { id: id as Id<"scans"> } : "skip");
 
+  // Analytics: report viewed (once per mounted report id)
+  const [viewTracked, setViewTracked] = useState(false);
+  useEffect(() => {
+    if (id && !viewTracked) {
+      setViewTracked(true);
+      trackEvent("report_viewed", { path: `/report/${id}` });
+    }
+  }, [id, viewTracked]);
+
   useEffect(() => {
     if (scan && scan.url) {
       const domain = getDomainFromUrl(scan.url);
@@ -172,7 +182,7 @@ export default function Report() {
     }
   }, [scan]);
 
-  const handleShare = async () => { try { await navigator.clipboard.writeText(window.location.href); setCopied(true); setTimeout(() => setCopied(false), 2000); } catch {} };
+  const handleShare = async () => { trackEvent("share_report_clicked", { path: window.location.pathname }); try { await navigator.clipboard.writeText(window.location.href); setCopied(true); setTimeout(() => setCopied(false), 2000); } catch {} };
 
   if (scan === undefined) return (<div className="min-h-screen bg-[#FFFBF0] flex items-center justify-center"><div className="flex flex-col items-center gap-4"><Loader2 className="size-8 animate-spin text-[#1a1a1a]/40" /><p className="text-sm font-medium text-[#1a1a1a]/60">Loading report...</p></div></div>);
   if (scan === null) return (<div className="min-h-screen bg-[#FFFBF0] flex items-center justify-center px-4"><div className="text-center"><div className="mb-6 flex size-16 mx-auto items-center justify-center border-2 border-[#1a1a1a] bg-red-100"><XCircle className="size-8 text-red-600" /></div><h1 className="text-2xl font-black">Report Not Found</h1><p className="mt-2 text-sm text-[#1a1a1a]/60 max-w-sm">This scan report does not exist or may have been removed.</p><Link to="/" className="mt-6 inline-flex items-center gap-2 border-2 border-[#1a1a1a] bg-[#FDE68A] px-5 py-2.5 text-sm font-black shadow-[3px_3px_0px_0px_#1a1a1a] transition-all hover:shadow-[1px_1px_0px_0px_#1a1a1a] hover:translate-x-[2px] hover:translate-y-[2px]"><ArrowLeft className="size-4" />Back to SitePulse</Link></div></div>);

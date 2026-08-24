@@ -17,6 +17,7 @@ const Report = lazy(() => import("./pages/Report.tsx"));
 const NotFound = lazy(() => import("./pages/NotFound.tsx"));
 const Privacy = lazy(() => import("./pages/Legal.tsx").then((m) => ({ default: m.Privacy })));
 const Terms = lazy(() => import("./pages/Legal.tsx").then((m) => ({ default: m.Terms })));
+const Admin = lazy(() => import("./pages/Admin.tsx"));
 
 // Simple loading fallback for route transitions
 function RouteLoading() {
@@ -89,6 +90,19 @@ const convex = new ConvexReactClient(import.meta.env.VITE_CONVEX_URL as string);
 
 function RouteSyncer() {
   const location = useLocation();
+
+  // First-party page-view analytics (fire-and-forget, never blocks routing).
+  useEffect(() => {
+    void (async () => {
+      try {
+        const { trackPageView } = await import("./lib/analytics");
+        trackPageView(location.pathname);
+      } catch {
+        /* analytics must never break the app */
+      }
+    })();
+  }, [location.pathname]);
+
   useEffect(() => {
     window.parent.postMessage(
       { type: "iframe-route-change", path: location.pathname },
@@ -126,6 +140,8 @@ createRoot(document.getElementById("root")!).render(
               <Route path="/report/:id" element={<Report />} />
               <Route path="/privacy" element={<Privacy />} />
               <Route path="/terms" element={<Terms />} />
+              {/* Admin-only analytics dashboard — not linked from public navigation. */}
+              <Route path="/admin" element={<Admin />} />
               <Route
                 path="/auth"
                 element={<AuthPage redirectAfterAuth="/dashboard" />}

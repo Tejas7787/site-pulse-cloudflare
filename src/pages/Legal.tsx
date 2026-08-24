@@ -26,6 +26,13 @@ const CONTENT: Record<
         ],
       },
       {
+        heading: "Anonymous usage statistics",
+        body: [
+          "To understand how SitePulse is used, we collect simple, anonymous usage counts: page views, scans started, scans completed, and similar product events. These measurements are first-party, cookie-less, and contain no personal information — no names, emails, IP addresses, or location data.",
+          "We store a random identifier in your browser's local storage and a separate one per browsing session so we can count unique visitors without identifying anyone. We do not use fingerprinting, advertising networks, or cross-site tracking. You can reset these identifiers at any time by clearing your browser storage.",
+        ],
+      },
+      {
         heading: "What SitePulse does not do",
         body: [
           "SitePulse only analyzes publicly accessible pages. It never attempts to log in, exploit vulnerabilities, or perform destructive actions against scanned sites.",

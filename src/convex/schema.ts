@@ -174,6 +174,20 @@ const schema = defineSchema(
     })
       .index("by_url", ["url"])
       .index("by_scanned_at", ["scannedAt"]),
+
+    // First-party, privacy-friendly product analytics (no PII, no fingerprinting)
+    analyticsEvents: defineTable({
+      name: v.string(), // page_view | scan_started | scan_completed | scan_failed | report_viewed | share_report_clicked
+      visitorId: v.string(), // random ID stored in the visitor's localStorage (not a fingerprint)
+      sessionId: v.string(), // random ID stored in sessionStorage (resets when the tab closes)
+      path: v.optional(v.string()), // e.g. "/", "/report/:id"
+      referrer: v.optional(v.string()), // external referrer host only, captured once per session
+      device: v.optional(v.string()), // coarse category: mobile | tablet | desktop | other
+      targetUrl: v.optional(v.string()), // for scan events: the URL that was scanned
+      createdAt: v.number(),
+    })
+      .index("by_name_created", ["name", "createdAt"])
+      .index("by_created", ["createdAt"]),
   },
   { schemaValidation: false },
 );
