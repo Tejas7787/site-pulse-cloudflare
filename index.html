@@ -6,7 +6,19 @@
   <link rel="icon" type="image/svg+xml" href="/logo.svg" />
   <link rel="manifest" href="/manifest.webmanifest" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Site Pulse Scan</title>
+  <!-- SEO -->
+  <title>SitePulse - Free Website Health Checker</title>
+  <meta name="description"
+    content="Scan any website instantly with SitePulse. Get a free health report on performance, SEO, security, accessibility, and technical issues." />
+  <!-- Canonical URL is set at runtime so it always matches the deployed domain -->
+  <link rel="canonical" id="canonical-link" href="/" />
+  <script>
+    document.getElementById("canonical-link").href = window.location.origin + "/";
+  </script>
+  <!-- Security header fallbacks (full HTTP headers are also declared in public/_headers) -->
+  <meta http-equiv="Content-Security-Policy"
+    content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.convex.cloud; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self' https://*.convex.cloud wss://*.convex.cloud; base-uri 'self'; form-action 'self'" />
+  <meta name="referrer" content="strict-origin-when-cross-origin" />
 </head>
 
 

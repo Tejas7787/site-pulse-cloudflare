@@ -228,7 +228,7 @@ export default function Landing() {
         <div className="mx-auto max-w-4xl px-4 py-16 text-center sm:px-6 sm:py-24">
           <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}>
             <div className="mb-6 inline-flex items-center gap-2 border-2 border-[#1a1a1a] bg-[#DBEAFE] px-3 py-1.5 text-sm font-bold"><Zap className="size-4" />Instant Website Analysis</div>
-            <h1 className="text-4xl font-black leading-[1.1] tracking-tight sm:text-6xl">How healthy is<br />your website?</h1>
+            <h1 className="text-4xl font-black leading-[1.1] tracking-tight sm:text-6xl"><span className="mb-3 block text-sm font-bold uppercase tracking-[0.2em] text-[#1a1a1a]/60 sm:text-base">SitePulse - Free Website Health Checker</span>How healthy is<br />your website?</h1>
             <p className="mx-auto mt-4 max-w-xl text-base text-[#1a1a1a]/60 sm:text-lg">Enter any public URL and get a clear health report with prioritized recommendations to improve performance, SEO, security, and accessibility.</p>
           </motion.div>
           <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4, delay: 0.15 }} className="mt-10">
