@@ -41,7 +41,7 @@ const CONTENT: Record<
       {
         heading: "Contact",
         body: [
-          "Questions about this policy? Email us at support@sitepulse.app.",
+          "Questions about this policy? Email us at sitepulse@freebuff.app.",
         ],
       },
     ],
@@ -77,7 +77,7 @@ const CONTENT: Record<
       {
         heading: "Changes to these terms",
         body: [
-          "We may update these terms from time to time. Continued use of SitePulse after changes are posted constitutes acceptance of the revised terms. Questions? Email support@sitepulse.app.",
+          "We may update these terms from time to time. Continued use of SitePulse after changes are posted constitutes acceptance of the revised terms. Questions? Email sitepulse@freebuff.app.",
         ],
       },
     ],
@@ -122,9 +122,10 @@ function LegalPage({ kind }: { kind: LegalKind }) {
         <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-4 px-4 py-6 sm:flex-row sm:px-6">
           <div className="flex items-center gap-2"><Activity className="size-4" /><span className="text-sm font-bold">SitePulse</span></div>
           <nav className="flex flex-wrap items-center justify-center gap-x-5 gap-y-2 text-sm font-medium">
+            <Link to="/about" className="text-white/70 underline-offset-2 transition-colors hover:text-white hover:underline">About</Link>
             <Link to="/privacy" className="text-white/70 underline-offset-2 transition-colors hover:text-white hover:underline">Privacy Policy</Link>
             <Link to="/terms" className="text-white/70 underline-offset-2 transition-colors hover:text-white hover:underline">Terms of Service</Link>
-            <a href="mailto:support@sitepulse.app" className="text-white/70 underline-offset-2 transition-colors hover:text-white hover:underline">Contact</a>
+            <a href="mailto:sitepulse@freebuff.app" className="text-white/70 underline-offset-2 transition-colors hover:text-white hover:underline">Contact</a>
           </nav>
           <p className="text-xs text-white/50">Free website health checker. No tracking. No sign-up required.</p>
         </div>

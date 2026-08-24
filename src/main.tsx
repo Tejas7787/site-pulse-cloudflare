@@ -18,6 +18,7 @@ const NotFound = lazy(() => import("./pages/NotFound.tsx"));
 const Privacy = lazy(() => import("./pages/Legal.tsx").then((m) => ({ default: m.Privacy })));
 const Terms = lazy(() => import("./pages/Legal.tsx").then((m) => ({ default: m.Terms })));
 const Admin = lazy(() => import("./pages/Admin.tsx"));
+const About = lazy(() => import("./pages/About.tsx"));
 
 // Simple loading fallback for route transitions
 function RouteLoading() {
@@ -140,6 +141,7 @@ createRoot(document.getElementById("root")!).render(
               <Route path="/report/:id" element={<Report />} />
               <Route path="/privacy" element={<Privacy />} />
               <Route path="/terms" element={<Terms />} />
+              <Route path="/about" element={<About />} />
               {/* Admin-only analytics dashboard — not linked from public navigation. */}
               <Route path="/admin" element={<Admin />} />
               <Route
