@@ -228,7 +228,7 @@ export default function Landing() {
         <div className="mx-auto max-w-4xl px-4 py-16 text-center sm:px-6 sm:py-24">
           <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}>
             <div className="mb-6 inline-flex items-center gap-2 border-2 border-[#1a1a1a] bg-[#DBEAFE] px-3 py-1.5 text-sm font-bold"><Zap className="size-4" />Instant Website Analysis</div>
-            <h1 className="text-4xl font-black leading-[1.1] tracking-tight sm:text-6xl"><span className="mb-3 block text-sm font-bold uppercase tracking-[0.2em] text-[#1a1a1a]/60 sm:text-base">SitePulse - Free Website Health Checker</span>How healthy is<br />your website?</h1>
+            <h1 className="text-4xl font-black leading-[1.1] tracking-tight sm:text-6xl"><span className="mb-3 block text-sm font-bold uppercase tracking-[0.2em] text-[#1a1a1a]/60 sm:text-base">SitePulse — Free Website Health Checker</span>How healthy is<br />your website?</h1>
             <p className="mx-auto mt-4 max-w-xl text-base text-[#1a1a1a]/60 sm:text-lg">Enter any public URL and get a clear health report with prioritized recommendations to improve performance, SEO, security, and accessibility.</p>
           </motion.div>
           <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4, delay: 0.15 }} className="mt-10">
@@ -428,6 +428,11 @@ export default function Landing() {
       <footer className="border-t-2 border-[#1a1a1a] bg-[#1a1a1a] text-white">
         <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-4 px-4 py-6 sm:flex-row sm:px-6">
           <div className="flex items-center gap-2"><Activity className="size-4" /><span className="text-sm font-bold">SitePulse</span></div>
+          <nav className="flex flex-wrap items-center justify-center gap-x-5 gap-y-2 text-sm font-medium">
+            <a href="/privacy" className="text-white/70 underline-offset-2 transition-colors hover:text-white hover:underline">Privacy Policy</a>
+            <a href="/terms" className="text-white/70 underline-offset-2 transition-colors hover:text-white hover:underline">Terms of Service</a>
+            <a href="mailto:support@sitepulse.app" className="text-white/70 underline-offset-2 transition-colors hover:text-white hover:underline">Contact</a>
+          </nav>
           <p className="text-xs text-white/50">Free website health checker. No tracking. No sign-up required.</p>
         </div>
       </footer>

@@ -15,6 +15,8 @@ const AuthPage = lazy(() => import("./pages/Auth.tsx"));
 const Dashboard = lazy(() => import("./pages/Dashboard.tsx"));
 const Report = lazy(() => import("./pages/Report.tsx"));
 const NotFound = lazy(() => import("./pages/NotFound.tsx"));
+const Privacy = lazy(() => import("./pages/Legal.tsx").then((m) => ({ default: m.Privacy })));
+const Terms = lazy(() => import("./pages/Legal.tsx").then((m) => ({ default: m.Terms })));
 
 // Simple loading fallback for route transitions
 function RouteLoading() {
@@ -122,6 +124,8 @@ createRoot(document.getElementById("root")!).render(
             <Routes>
               <Route path="/" element={<Landing />} />
               <Route path="/report/:id" element={<Report />} />
+              <Route path="/privacy" element={<Privacy />} />
+              <Route path="/terms" element={<Terms />} />
               <Route
                 path="/auth"
                 element={<AuthPage redirectAfterAuth="/dashboard" />}
