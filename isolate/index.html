@@ -6,17 +6,39 @@
   <link rel="icon" type="image/svg+xml" href="/logo.svg" />
   <link rel="manifest" href="/manifest.webmanifest" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Site Pulse Scan</title>
-  <script type="module" crossorigin src="/assets/index-dNrJb-IT.js"></script>
+  <!-- SEO -->
+  <title>SitePulse - Free Website Security &amp; Health Scanner</title>
+  <meta name="description"
+    content="Scan any website for security vulnerabilities, SEO issues, and performance problems. Get a free health report in seconds." />
+  <!-- Canonical URL is set at runtime so it always matches the deployed domain -->
+  <link rel="canonical" id="canonical-link" href="https://sitepulse.pages.dev/" />
+  <script>
+    document.getElementById("canonical-link").href = window.location.origin + "/";
+  </script>
+  <!-- Security header fallbacks (full HTTP headers are also declared in public/_headers) -->
+  <meta http-equiv="Content-Security-Policy"
+    content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.convex.cloud; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self' https://*.convex.cloud wss://*.convex.cloud; base-uri 'self'; form-action 'self'" />
+  <meta name="referrer" content="strict-origin-when-cross-origin" />
+  <script type="module" crossorigin src="/assets/index-HZgLvyhM.js"></script>
   <link rel="modulepreload" crossorigin href="/assets/react-vendor-yijSofTl.js">
   <link rel="modulepreload" crossorigin href="/assets/framer-motion-pgkiS-PG.js">
   <link rel="modulepreload" crossorigin href="/assets/radix-ui-CRbQ5wQc.js">
-  <link rel="stylesheet" crossorigin href="/assets/index-DMztk7i-.css">
+  <link rel="stylesheet" crossorigin href="/assets/index-DzrW3e6T.css">
 </head>
 
 
 <body>
-  <div id="root"></div>
+  <div id="root">
+    <!-- Static SEO fallback: replaced when React mounts; readable by crawlers that don't run JS -->
+    <main style="max-width: 48rem; margin: 0 auto; padding: 3rem 1.5rem; font-family: system-ui, sans-serif; color: #1a1a1a;">
+      <h1 style="font-size: 2.5rem; font-weight: 900; text-align: center; margin: 20px 0;">SitePulse — Free Website Health Checker</h1>
+      <p style="text-align: center; color: #555;">Scan any website for security vulnerabilities, SEO issues, and performance problems. Get a free health report in seconds.</p>
+      <h2 style="margin-top: 2rem;">What We Check</h2>
+      <p>SitePulse analyzes five areas of website health: Performance, SEO, Security, Accessibility, and Technical Health — then gives you a prioritized list of fixes.</p>
+      <h2 style="margin-top: 1.5rem;">How It Works</h2>
+      <p>Enter any public URL and SitePulse fetches the page over plain HTTP requests — no sign-up required — and returns a clear health score with actionable recommendations.</p>
+    </main>
+  </div>
 </body>
 
 </html>
