@@ -188,6 +188,18 @@ const schema = defineSchema(
     })
       .index("by_name_created", ["name", "createdAt"])
       .index("by_created", ["createdAt"]),
+
+    // Optional user feedback submitted from the footer form. Admin-only access.
+    feedback: defineTable({
+      rating: v.number(), // 1–5
+      thought: v.optional(v.string()), // what did you think
+      improve: v.optional(v.string()), // what should we improve
+      featureRequest: v.optional(v.string()), // next feature
+      problem: v.optional(v.string()), // problems found
+      email: v.optional(v.string()), // optional contact address
+      path: v.optional(v.string()), // page it was submitted from
+      createdAt: v.number(),
+    }).index("by_created", ["createdAt"]),
   },
   { schemaValidation: false },
 );

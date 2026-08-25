@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from "react";
 import { useAction, useMutation } from "convex/react";
 import { api } from "../convex/_generated/api";
 import { trackEvent } from "../lib/analytics";
+import FeedbackModal from "../components/FeedbackModal";
 import { motion, AnimatePresence } from "framer-motion";
 import { useNavigate, Link } from "react-router";
 import {
@@ -175,6 +176,7 @@ export default function Landing() {
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [prevScore, setPrevScore] = useState<number | null>(null);
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
   const scanWebsite = useAction(api.scan.scanWebsite);
   const saveScan = useMutation(api.scans.saveScan);
   const navigate = useNavigate();
@@ -448,9 +450,18 @@ export default function Landing() {
             <Link to="/terms" className="text-white/70 underline-offset-2 transition-colors hover:text-white hover:underline">Terms of Service</Link>
             <a href="mailto:sitepulse@freebuff.app" className="text-white/70 underline-offset-2 transition-colors hover:text-white hover:underline">Contact</a>
           </nav>
+          <button
+            type="button"
+            onClick={() => setFeedbackOpen(true)}
+            className="inline-flex items-center gap-1.5 border-2 border-white bg-transparent px-3 py-1.5 text-sm font-bold text-white shadow-[2px_2px_0px_0px_rgba(255,255,255,0.4)] transition-all hover:bg-white hover:text-[#1a1a1a]"
+          >
+            💬 Give Feedback
+          </button>
           <p className="text-xs text-white/50">Free website health checker. No tracking. No sign-up required.</p>
         </div>
       </footer>
+
+      {feedbackOpen && <FeedbackModal onClose={() => setFeedbackOpen(false)} />}
     </div>
   );
 }

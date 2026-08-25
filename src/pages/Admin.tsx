@@ -4,7 +4,8 @@ import { api } from "../convex/_generated/api";
 import { Link } from "react-router";
 import {
   Activity, BarChart3, CheckCircle2, Eye, Globe, Lock, Monitor,
-  MousePointerClick, ScanSearch, Smartphone, Tablet, TrendingUp, Users, XCircle,
+  MousePointerClick, ScanSearch, Smartphone, Star, Tablet, TrendingUp, Users, XCircle,
+  MessageSquare,
 } from "lucide-react";
 
 const PC_KEY = "sp_admin_pc";
@@ -101,6 +102,11 @@ export default function Admin() {
 
   const dashboard = useQuery(
     api.analytics.getDashboard,
+    passcode ? { passcode } : "skip",
+  );
+
+  const feedback = useQuery(
+    api.feedback.getAdmin,
     passcode ? { passcode } : "skip",
   );
 
@@ -245,7 +251,99 @@ export default function Admin() {
             Last updated {new Date(d.generatedAt).toLocaleString()}.
           </p>
         </section>
+
+        {/* Feedback */}
+        <FeedbackSection data={feedback} />
       </main>
     </div>
+  );
+}
+
+const RATING_FILTERS = ["All", 5, 4, 3, 2, 1] as const;
+type RatingFilter = (typeof RATING_FILTERS)[number];
+
+type FeedbackData =
+  | { authorized: true; total: number; averageRating: number | null; byRating: { rating: number; count: number }[]; recent: { _id: string; rating: number; thought?: string; improve?: string; featureRequest?: string; problem?: string; email?: string; path?: string; createdAt: number }[] }
+  | { authorized: false }
+  | undefined;
+
+function FeedbackSection({ data }: { data: FeedbackData }) {
+  const [filter, setFilter] = useState<RatingFilter>("All");
+
+  const items =
+    data && "authorized" in data && data.authorized
+      ? filter === "All"
+        ? data.recent
+        : data.recent.filter((f) => f.rating === filter)
+      : [];
+
+  return (
+    <section aria-labelledby="feedback-h">
+      <h2 id="feedback-h" className="mb-3 flex items-center gap-2 text-base font-black uppercase tracking-wide"><MessageSquare className="size-5" aria-hidden="true" />User Feedback</h2>
+
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+        <StatCard label="Total feedback" value={data && "authorized" in data && data.authorized ? String(data.total) : "—"} icon={MessageSquare} accent="bg-[#EDE9FE]" />
+        <StatCard
+          label="Average rating"
+          value={data && "authorized" in data && data.authorized && data.averageRating !== null ? `${data.averageRating}★` : "No data yet"}
+          icon={Star}
+        />
+        {(data && "authorized" in data && data.authorized ? data.byRating : [5, 4, 3, 2, 1].map((r) => ({ rating: r, count: 0 }))).map((b) => (
+          <StatCard key={b.rating} label={`${b.rating}★ ratings`} value={String(b.count)} icon={Star} />
+        ))}
+      </div>
+
+      <div className="mt-3 border-2 border-[#1a1a1a] bg-white p-4 shadow-[4px_4px_0px_0px_#1a1a1a]">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <h3 className="text-sm font-black uppercase tracking-wide">Recent feedback</h3>
+          <div className="flex flex-wrap gap-1.5" role="group" aria-label="Filter feedback by rating">
+            {RATING_FILTERS.map((f) => (
+              <button
+                key={String(f)}
+                type="button"
+                onClick={() => setFilter(f)}
+                aria-pressed={filter === f}
+                className={`border-2 border-[#1a1a1a] px-2.5 py-0.5 text-xs font-bold transition-colors ${filter === f ? "bg-[#FDE68A]" : "bg-white hover:bg-[#FFFBF0]"}`}
+              >
+                {f === "All" ? "All" : `${f}★`}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {!data || !("authorized" in data) || !data.authorized ? (
+          <p className="py-6 text-center text-sm font-medium text-[#1a1a1a]/50">Feedback unavailable.</p>
+        ) : items.length === 0 ? (
+          <p className="py-6 text-center text-sm font-medium text-[#1a1a1a]/50">
+            {filter === "All" ? "No feedback yet." : `No ${filter}★ feedback yet.`}
+          </p>
+        ) : (
+          <ul className="divide-y-2 divide-[#1a1a1a]/10">
+            {items.map((f) => (
+              <li key={f._id} className="py-3 first:pt-0 last:pb-0">
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                  <span aria-label={`${f.rating} out of 5 stars`} className="flex items-center gap-0.5">
+                    {[1, 2, 3, 4, 5].map((n) => (
+                      <Star key={n} className={`size-3.5 ${n <= f.rating ? "fill-[#FBBF24] text-[#1a1a1a]" : "text-[#1a1a1a]/25"}`} aria-hidden="true" />
+                    ))}
+                  </span>
+                  <time dateTime={new Date(f.createdAt).toISOString()} className="text-xs font-bold tabular-nums text-[#1a1a1a]/50">
+                    {new Date(f.createdAt).toLocaleString()}
+                  </time>
+                  {f.path && <span className="text-xs font-medium text-[#1a1a1a]/40">from {f.path}</span>}
+                  {f.email && <span className="text-xs font-medium text-[#1a1a1a]/40">· {f.email}</span>}
+                </div>
+                <dl className="mt-1.5 space-y-0.5 text-sm">
+                  {f.thought && <div className="font-medium"><dt className="sr-only">Thoughts</dt><dd>{f.thought}</dd></div>}
+                  {f.improve && <div><dt className="inline font-bold text-[#1a1a1a]/60">Improve: </dt><dd className="inline">{f.improve}</dd></div>}
+                  {f.featureRequest && <div><dt className="inline font-bold text-[#1a1a1a]/60">Feature request: </dt><dd className="inline">{f.featureRequest}</dd></div>}
+                  {f.problem && <div><dt className="inline font-bold text-red-700">Problem: </dt><dd className="inline">{f.problem}</dd></div>}
+                </dl>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </section>
   );
 }
