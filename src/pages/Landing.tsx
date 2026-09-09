@@ -3,6 +3,8 @@ import { useAction, useMutation } from "convex/react";
 import { api } from "../convex/_generated/api";
 import { trackEvent } from "../lib/analytics";
 import FeedbackModal from "../components/FeedbackModal";
+import { addScanToHistory, getScanHistory, clearScanHistory, domainFromUrl, formatScanDate, type ScanHistoryEntry } from "../lib/scanHistory";
+import { History, Trash2 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useNavigate, Link } from "react-router";
 import {
@@ -177,6 +179,7 @@ export default function Landing() {
   const [copied, setCopied] = useState(false);
   const [prevScore, setPrevScore] = useState<number | null>(null);
   const [feedbackOpen, setFeedbackOpen] = useState(false);
+  const [history, setHistory] = useState<ScanHistoryEntry[]>(() => getScanHistory());
   const scanWebsite = useAction(api.scan.scanWebsite);
   const saveScan = useMutation(api.scans.saveScan);
   const navigate = useNavigate();
@@ -206,6 +209,20 @@ export default function Landing() {
         const forSave = nullsToUndefined(scanResult) as Parameters<typeof saveScan>[0];
         const id = await saveScan(forSave);
         setScanId(id);
+        const historyEntry: ScanHistoryEntry = {
+          scanId: id,
+          url: scanResult.url,
+          score: scanResult.score,
+          grade: scanResult.grade,
+          performanceScore: scanResult.performanceScore,
+          seoScore: scanResult.seoScore,
+          securityScore: scanResult.securityScore,
+          accessibilityScore: scanResult.accessibilityScore,
+          technicalHealthScore: scanResult.technicalHealthScore,
+          scannedAt: scanResult.scannedAt,
+        };
+        addScanToHistory(historyEntry);
+        setHistory(getScanHistory());
         trackEvent("scan_completed", { targetUrl: scanResult.url });
         navigate(`/report/${id}`);
       } catch { setTimeout(() => { resultsRef.current?.scrollIntoView({ behavior: "smooth" }); }, 100); }
@@ -234,7 +251,14 @@ export default function Landing() {
             <div className="flex size-10 items-center justify-center border-2 border-[#1a1a1a] bg-[#FDE68A]"><Activity className="size-5" strokeWidth={2.5} /></div>
             <span className="text-xl font-black tracking-tight">SitePulse</span>
           </div>
-          <span className="hidden text-sm font-medium text-[#1a1a1a]/50 sm:block">Free website health checker</span>
+          <div className="flex items-center gap-4">
+            {history.length > 0 && (
+              <button onClick={() => { if (result) { setResult(null); setScanId(null); setPrevScore(null); } setTimeout(() => document.getElementById('scan-history')?.scrollIntoView({ behavior: 'smooth' }), 50); }} className="inline-flex items-center gap-1.5 border-2 border-[#1a1a1a] bg-white px-3 py-1.5 text-xs font-bold transition-colors hover:bg-[#E0E7FF]" aria-label="View scan history">
+                <History className="size-3.5" aria-hidden="true" />History {history.length > 0 && <span className="ml-0.5 border border-[#1a1a1a]/20 bg-[#FFFBF0] px-1.5 py-0.5 text-[10px] font-black">{history.length}</span>}
+              </button>
+            )}
+            <span className="hidden text-sm font-medium text-[#1a1a1a]/50 sm:block">Free website health checker</span>
+          </div>
         </div>
       </nav>
 
@@ -260,6 +284,63 @@ export default function Landing() {
           </motion.div>
         </div>
       </section>
+
+      {!result && !scanning && history.length > 0 && (
+        <section id="scan-history" className="border-b-2 border-[#1a1a1a] bg-white">
+          <div className="mx-auto max-w-6xl px-4 py-12 sm:px-6">
+            <div className="mb-6 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="flex size-10 items-center justify-center border-2 border-[#1a1a1a] bg-[#E0E7FF]" aria-hidden="true"><History className="size-5" strokeWidth={2.5} /></div>
+                <div>
+                  <h2 className="text-xl font-black tracking-tight sm:text-2xl">Scan History</h2>
+                  <p className="text-xs text-[#1a1a1a]/50">Your recent website scans</p>
+                </div>
+              </div>
+              <button
+                onClick={() => { clearScanHistory(); setHistory([]); }}
+                className="inline-flex items-center gap-1.5 border-2 border-[#1a1a1a] bg-white px-3 py-1.5 text-xs font-bold transition-colors hover:bg-red-50 hover:text-red-600"
+                aria-label="Clear all scan history"
+              >
+                <Trash2 className="size-3.5" aria-hidden="true" />Clear All
+              </button>
+            </div>
+            <div className="space-y-0">
+              {history.map((entry) => {
+                const gradeBg = entry.grade === "A" ? "bg-emerald-400" : entry.grade === "B" ? "bg-lime-400" : entry.grade === "C" ? "bg-yellow-400" : entry.grade === "D" ? "bg-orange-400" : "bg-red-400";
+                return (
+                  <button
+                    key={entry.scanId}
+                    onClick={() => navigate(`/report/${entry.scanId}`)}
+                    className="group flex w-full items-center gap-4 border-2 border-[#1a1a1a] border-b-0 bg-[#FFFBF0] px-4 py-3 text-left transition-colors last:border-b-2 hover:bg-[#FDE68A]/30 sm:px-6"
+                    aria-label={`View report for ${domainFromUrl(entry.url)}, score ${entry.score}${entry.grade}`}
+                  >
+                    <div className={`flex size-12 shrink-0 items-center justify-center border-2 border-[#1a1a1a] ${gradeBg}`} aria-hidden="true">
+                      <span className="text-xl font-black text-[#1a1a1a]">{entry.score}</span>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="truncate text-sm font-bold text-[#1a1a1a]">{domainFromUrl(entry.url)}</span>
+                        <span className="shrink-0 border-2 border-[#1a1a1a] bg-[#1a1a1a] px-2 py-0.5 text-[10px] font-black text-white">{entry.grade}</span>
+                      </div>
+                      <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[10px] font-medium text-[#1a1a1a]/50">
+                        <span>Perf {entry.performanceScore}</span>
+                        <span>SEO {entry.seoScore}</span>
+                        <span>Sec {entry.securityScore}</span>
+                        <span>A11y {entry.accessibilityScore}</span>
+                        <span>Tech {entry.technicalHealthScore}</span>
+                      </div>
+                    </div>
+                    <div className="shrink-0 text-right">
+                      <div className="text-[10px] font-medium text-[#1a1a1a]/40">{formatScanDate(entry.scannedAt)}</div>
+                      <ArrowRight className="mt-1 size-4 text-[#1a1a1a]/20 transition-colors group-hover:text-[#1a1a1a]/60" aria-hidden="true" />
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </section>
+      )}
 
       {!result && !scanning && (
         <section className="border-b-2 border-[#1a1a1a] bg-white">
