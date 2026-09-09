@@ -5,6 +5,7 @@ import { trackEvent } from "../lib/analytics";
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import FixRecommendations from "../components/FixRecommendations";
+import AIAssistant from "../components/AIAssistant";
 import type { Id } from "../convex/_generated/dataModel";
 import type { Priority, Severity } from "../types/scan";
 import {
@@ -310,6 +311,27 @@ export default function Report() {
 
       {/* Fix Recommendations — actionable fixes for every failed/warning check */}
       <FixRecommendations issues={s.issues} />
+
+      {/* AI Assistant — scan-aware Q&A */}
+      <AIAssistant
+        scan={{
+          url: s.url,
+          score: s.score,
+          grade: s.grade || scoreToGrade(s.score),
+          performanceScore: s.performanceScore ?? 0,
+          seoScore: s.seoScore ?? 0,
+          securityScore: s.securityScore ?? 0,
+          accessibilityScore: s.accessibilityScore ?? 0,
+          technicalHealthScore: s.technicalHealthScore ?? 0,
+          issues: s.issues,
+          totalPassed: s.totalPassed ?? 0,
+          totalFailed: s.totalFailed ?? 0,
+          totalWarnings: s.totalWarnings ?? 0,
+          https: s.https,
+          status: s.status,
+          responseTime: s.responseTime,
+        }}
+      />
 
       {/* Quick Wins */}
       {quickWins.length > 0 && (
