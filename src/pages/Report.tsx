@@ -4,6 +4,7 @@ import { api } from "../convex/_generated/api";
 import { trackEvent } from "../lib/analytics";
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import FixRecommendations from "../components/FixRecommendations";
 import type { Id } from "../convex/_generated/dataModel";
 import type { Priority, Severity } from "../types/scan";
 import {
@@ -306,6 +307,9 @@ export default function Report() {
           </div>
         </section>
       )}
+
+      {/* Fix Recommendations — actionable fixes for every failed/warning check */}
+      <FixRecommendations issues={s.issues} />
 
       {/* Quick Wins */}
       {quickWins.length > 0 && (
