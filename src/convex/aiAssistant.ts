@@ -193,9 +193,27 @@ export const askAssistant = action({
   handler: async (_ctx, { question, scanData }) => {
     let parsed: ScanData;
     try {
+      // scanData is expected to be a JSON string from the frontend.
       parsed = JSON.parse(scanData);
     } catch {
-      return { answer: "Unable to parse scan data. Please try scanning again." };
+      // If it's not valid JSON, return a clear error.
+      return {
+        answer:
+          "Unable to parse scan data. This usually means the scan results were not transferred correctly. Please run a new scan and try again.",
+      };
+    }
+
+    // Validate that parsed data has the minimum required fields.
+    if (
+      typeof parsed !== "object" ||
+      parsed === null ||
+      typeof parsed.score !== "number" ||
+      typeof parsed.url !== "string"
+    ) {
+      return {
+        answer:
+          "The scan data appears incomplete (missing score or URL). Please run a new scan and try again.",
+      };
     }
 
     // Try AI first

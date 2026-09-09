@@ -312,27 +312,6 @@ export default function Report() {
       {/* Fix Recommendations — actionable fixes for every failed/warning check */}
       <FixRecommendations issues={s.issues} />
 
-      {/* AI Assistant — scan-aware Q&A */}
-      <AIAssistant
-        scan={{
-          url: s.url,
-          score: s.score,
-          grade: s.grade || scoreToGrade(s.score),
-          performanceScore: s.performanceScore ?? 0,
-          seoScore: s.seoScore ?? 0,
-          securityScore: s.securityScore ?? 0,
-          accessibilityScore: s.accessibilityScore ?? 0,
-          technicalHealthScore: s.technicalHealthScore ?? 0,
-          issues: s.issues,
-          totalPassed: s.totalPassed ?? 0,
-          totalFailed: s.totalFailed ?? 0,
-          totalWarnings: s.totalWarnings ?? 0,
-          https: s.https,
-          status: s.status,
-          responseTime: s.responseTime,
-        }}
-      />
-
       {/* Quick Wins */}
       {quickWins.length > 0 && (
         <section className="border-b-2 border-[#1a1a1a] bg-white">
@@ -586,6 +565,27 @@ export default function Report() {
           <Link to="/" className="inline-flex items-center gap-2 border-2 border-[#1a1a1a] bg-[#FDE68A] px-6 py-3 text-sm font-black shadow-[3px_3px_0px_0px_#1a1a1a] transition-all hover:shadow-[1px_1px_0px_0px_#1a1a1a] hover:translate-x-[2px] hover:translate-y-[2px]"><Activity className="size-4" />Run a New Scan</Link>
         </div>
       </section>
+
+      {/* AI Assistant — LAST SECTION before footer */}
+      <AIAssistant
+        scan={{
+          url: s.url,
+          score: s.score,
+          grade: s.grade || scoreToGrade(s.score),
+          performanceScore: s.performanceScore ?? 0,
+          seoScore: s.seoScore ?? 0,
+          securityScore: s.securityScore ?? 0,
+          accessibilityScore: s.accessibilityScore ?? 0,
+          technicalHealthScore: s.technicalHealthScore ?? 0,
+          issues: s.issues,
+          totalPassed: s.totalPassed ?? 0,
+          totalFailed: s.totalFailed ?? 0,
+          totalWarnings: s.totalWarnings ?? 0,
+          https: s.https,
+          status: s.status,
+          responseTime: s.responseTime,
+        }}
+      />
 
       <footer className="border-t-2 border-[#1a1a1a] bg-[#1a1a1a] text-white">
         <div className="mx-auto flex max-w-5xl flex-col items-center justify-between gap-4 px-4 py-6 sm:flex-row sm:px-6">

@@ -52,27 +52,24 @@ const SUGGESTED_QUESTIONS = [
 /* ── Helpers ────────────────────────────────────────────────────────── */
 
 function buildScanData(scan: ScanSummary): string {
-  return [
-    `URL: ${scan.url}`,
-    `Overall Score: ${scan.score}/100 (Grade ${scan.grade})`,
-    `Performance: ${scan.performanceScore}/100`,
-    `SEO: ${scan.seoScore}/100`,
-    `Security: ${scan.securityScore}/100`,
-    `Accessibility: ${scan.accessibilityScore}/100`,
-    `Technical Health: ${scan.technicalHealthScore}/100`,
-    `HTTPS: ${scan.https ? "Yes" : "No"}`,
-    `HTTP Status: ${scan.status}`,
-    `Response Time: ${scan.responseTime}ms`,
-    `Checks Passed: ${scan.totalPassed}`,
-    `Checks Failed: ${scan.totalFailed}`,
-    `Warnings: ${scan.totalWarnings}`,
-    "",
-    `Issues (${scan.issues.length} total):`,
-    ...scan.issues.map(
-      (i) =>
-        `- [${i.priority}/${i.severity}] ${i.message} — ${i.howToFix}`,
-    ),
-  ].join("\n");
+  // Return a JSON string so the Convex action can JSON.parse() it once.
+  return JSON.stringify({
+    url: scan.url,
+    score: scan.score,
+    grade: scan.grade,
+    performanceScore: scan.performanceScore,
+    seoScore: scan.seoScore,
+    securityScore: scan.securityScore,
+    accessibilityScore: scan.accessibilityScore,
+    technicalHealthScore: scan.technicalHealthScore,
+    issues: scan.issues,
+    totalPassed: scan.totalPassed,
+    totalFailed: scan.totalFailed,
+    totalWarnings: scan.totalWarnings,
+    https: scan.https,
+    status: scan.status,
+    responseTime: scan.responseTime,
+  });
 }
 
 /* ── Component ──────────────────────────────────────────────────────── */
