@@ -28,14 +28,12 @@
   <meta name="twitter:description" content="Scan any website for security vulnerabilities, SEO issues, and performance problems. Get a free health report in seconds." />
   <meta name="twitter:image" content="https://sitepulse.freebuff.app/logo.svg" />
   <meta name="theme-color" content="#FFFBF0" />
-  <!-- Security meta tags (browser enforcement where supported) -->
+  <!-- Security: CSP via meta tag (only CSP is valid per the HTML spec via meta http-equiv).
+       Other security headers (X-Frame-Options, X-Content-Type-Options, Referrer-Policy,
+       Permissions-Policy, HSTS, X-Permitted-Cross-Domain-Policies) must be delivered as
+       HTTP response headers by the server/CDN layer. -->
   <meta http-equiv="Content-Security-Policy"
     content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.convex.cloud; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data: https://fonts.gstatic.com; connect-src 'self' https://*.convex.cloud wss://*.convex.cloud; base-uri 'self'; form-action 'self'; frame-ancestors 'none'" />
-  <meta name="referrer" content="strict-origin-when-cross-origin" />
-  <meta http-equiv="X-Content-Type-Options" content="nosniff" />
-  <meta http-equiv="X-Frame-Options" content="DENY" />
-  <meta http-equiv="Permissions-Policy" content="camera=(), microphone=(), geolocation=(), payment=()" />
-  <meta http-equiv="X-Permitted-Cross-Domain-Policies" content="none" />
 </head>
 
 

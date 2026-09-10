@@ -562,24 +562,23 @@ export const scanWebsite = action({
     let securityPoints = isHttps ? 20 : 0; // base from HTTPS
     const maxSecurityPoints = 20 + 20 + 15 + 15 + 15 + 15 + 10 + 10; // = 120, but cap at 100
 
-    // Helper: check if a security header is declared via <meta http-equiv> in the HTML
-    // Also handles special cases like <meta name="referrer"> for Referrer-Policy
-    function hasMetaEquiv(headerName: string): boolean {
-      const tag = `<meta http-equiv="${headerName}"`;
-      if (pageContent.toLowerCase().includes(tag.toLowerCase())) return true;
-      // Special case: Referrer-Policy uses <meta name="referrer"> instead
-      if (headerName.toLowerCase() === "referrer-policy") {
-        return /<meta\s+[^>]*name=["']referrer["'][^>]*>/i.test(pageContent);
-      }
-      return false;
+    // Helper: check if a security header is declared via <meta http-equiv> in the HTML.
+    // Per the HTML spec, ONLY Content-Security-Policy is valid via <meta http-equiv>.
+    // All other security headers MUST be delivered as HTTP response headers.
+    // Browser support: CSP meta-equiv works in all modern browsers (with minor
+    // limitations like no frame-ancestors/report-uri). No other security header
+    // has a valid meta-equiv equivalent.
+    function hasMetaEquivCSP(): boolean {
+      return /<meta\s+[^>]*http-equiv=["']Content-Security-Policy["'][^>]*>/i.test(pageContent);
     }
 
     const headerIssues: Array<{ key: string; header: typeof securityHeaderDefs[0] }> = [];
     for (const sh of securityHeaderDefs) {
-      // Accept either a real HTTP header OR an equivalent <meta http-equiv> tag.
-      // Meta-equiv is a valid fallback that browsers honour for CSP and other
-      // headers when the HTTP header is not present.
-      const present = !!headers.get(sh.name) || hasMetaEquiv(sh.name);
+      // Only CSP has a valid <meta http-equiv> fallback per the HTML spec.
+      // All other security headers must be delivered as actual HTTP response headers.
+      const isHttpHeaderPresent = !!headers.get(sh.name);
+      const isMetaFallback = sh.key === "csp" && hasMetaEquivCSP();
+      const present = isHttpHeaderPresent || isMetaFallback;
       securityChecks[`header-${sh.key}`] = present ? "pass" : "fail";
       if (present) {
         securityPoints += sh.points;
