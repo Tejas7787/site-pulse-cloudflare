@@ -8,6 +8,7 @@
   },
   "scripts": {
     "dev": "vite",
+    "prebuild": "convex codegen || echo '[sitepulse] convex codegen unavailable here; using committed src/convex/_generated files'",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "format": "prettier --write .",
