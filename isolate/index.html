@@ -28,10 +28,12 @@
   <meta name="twitter:description" content="Scan any website for security vulnerabilities, SEO issues, and performance problems. Get a free health report in seconds." />
   <meta name="twitter:image" content="https://sitepulse.freebuff.app/logo.svg" />
   <meta name="theme-color" content="#FFFBF0" />
-  <!-- Security header fallbacks (full HTTP headers are also declared in public/_headers) -->
+  <!-- Security: CSP via meta tag (only CSP is valid per the HTML spec via meta http-equiv).
+       Other security headers (X-Frame-Options, X-Content-Type-Options, Referrer-Policy,
+       Permissions-Policy, HSTS, X-Permitted-Cross-Domain-Policies) must be delivered as
+       HTTP response headers by the server/CDN layer. -->
   <meta http-equiv="Content-Security-Policy"
     content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.convex.cloud; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data: https://fonts.gstatic.com; connect-src 'self' https://*.convex.cloud wss://*.convex.cloud; base-uri 'self'; form-action 'self'; frame-ancestors 'none'" />
-  <meta name="referrer" content="strict-origin-when-cross-origin" />
   <script type="module" crossorigin src="/assets/index-DDXmAvoD.js"></script>
   <link rel="modulepreload" crossorigin href="/assets/react-vendor-yijSofTl.js">
   <link rel="modulepreload" crossorigin href="/assets/framer-motion-pgkiS-PG.js">
@@ -51,6 +53,12 @@
       <h2 style="margin-top: 1.5rem;">How It Works</h2>
       <p>Enter any public URL and SitePulse fetches the page over plain HTTP requests — no sign-up required — and returns a clear health score with actionable recommendations.</p>
     </main>
+    <footer style="max-width: 48rem; margin: 0 auto; padding: 1.5rem; font-family: system-ui, sans-serif; color: #555; text-align: center; border-top: 1px solid #ddd; font-size: 0.875rem;">
+      <a href="/about" style="color: #555; text-decoration: underline; margin: 0 0.5rem;">About</a> |
+      <a href="/privacy" style="color: #555; text-decoration: underline; margin: 0 0.5rem;">Privacy Policy</a> |
+      <a href="/terms" style="color: #555; text-decoration: underline; margin: 0 0.5rem;">Terms of Service</a> |
+      <a href="mailto:sitepulse@freebuff.app" style="color: #555; text-decoration: underline; margin: 0 0.5rem;">Contact</a>
+    </footer>
   </div>
 </body>
 
