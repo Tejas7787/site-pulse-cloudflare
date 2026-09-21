@@ -415,7 +415,7 @@ export default function FixRecommendations({
   ];
 
   return (
-    <section className="border-b-2 border-[#1a1a1a] bg-white">
+    <section id="fix-recommendations" className="border-b-2 border-[#1a1a1a] bg-white">
       <div className="mx-auto max-w-5xl px-4 py-6 sm:px-6">
         {/* Header */}
         <div className="flex items-center gap-2 mb-1">

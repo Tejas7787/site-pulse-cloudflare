@@ -9,7 +9,7 @@ import AIAssistant from "../components/AIAssistant";
 import type { Id } from "../convex/_generated/dataModel";
 import type { Priority, Severity } from "../types/scan";
 import {
-  ArrowLeft, CheckCircle, AlertTriangle, XCircle, Info, ChevronDown, ChevronUp,
+  ArrowDown, ArrowLeft, CheckCircle, AlertTriangle, XCircle, Info, ChevronDown, ChevronUp,
   ExternalLink, Activity, Share2, Loader2, Globe, Shield, Search, Zap, Eye,
   BarChart3, TrendingUp, TrendingDown, Minus, Target, Lightbulb, Lock, Cookie,
   Image, Server, FileText, BadgeCheck, AlertOctagon, ShieldAlert, BookOpen,
@@ -202,6 +202,17 @@ export default function Report() {
   const criticalIssues = s.topIssues?.filter((i) => i.priority === "critical") ?? s.issues.filter((i) => i.priority === "critical").slice(0, 5);
   const quickWins = s.quickWins ?? [];
 
+  // Issues grouped by severity for the Check Summary jump links
+  const failedIssues = s.issues.filter((i) => i.severity === "critical");
+  const warningIssues = s.issues.filter((i) => i.severity === "warning");
+  const recommendedIssues = s.issues.filter(
+    (i) => i.priority === "recommended" && i.severity !== "critical" && i.severity !== "warning",
+  );
+
+  const scrollToSection = (id: string) => {
+    document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
   const riskConfig: Record<string, { color: string; bg: string; border: string; label: string }> = {
     low: { color: "text-emerald-700", bg: "bg-emerald-100", border: "border-emerald-300", label: "Low Risk" },
     medium: { color: "text-yellow-700", bg: "bg-yellow-100", border: "border-yellow-300", label: "Medium Risk" },
@@ -286,21 +297,38 @@ export default function Report() {
             {[
               { label: "Checks Run", value: String(s.totalChecksCompleted ?? 0), icon: BarChart3, color: "text-[#1a1a1a]" },
               { label: "Passed", value: String(s.totalPassed ?? 0), icon: CheckCircle, color: "text-emerald-600" },
-              { label: "Failed", value: String(s.totalFailed ?? 0), icon: XCircle, color: "text-red-600" },
-              { label: "Warnings", value: String(s.totalWarnings ?? 0), icon: AlertTriangle, color: "text-amber-600" },
-            ].map((stat, i) => (
-              <div key={stat.label} className={`border-b-2 border-[#1a1a1a] p-4 ${i < 3 ? "sm:border-r-2" : ""}`}>
-                <div className="flex items-center gap-2"><stat.icon className={`size-4 ${stat.color}`} /><span className="text-xs font-bold text-[#1a1a1a]/50 uppercase tracking-wider">{stat.label}</span></div>
-                <div className={`mt-2 text-3xl font-black ${stat.color}`}>{stat.value}</div>
-              </div>
-            ))}
+              { label: "Failed", value: String(s.totalFailed ?? 0), icon: XCircle, color: "text-red-600", targetId: criticalIssues.length > 0 ? "fix-these-first" : warningIssues.length > 0 || recommendedIssues.length > 0 ? "fix-recommendations" : undefined, targetLabel: "failed issues" },
+              { label: "Warnings", value: String(s.totalWarnings ?? 0), icon: AlertTriangle, color: "text-amber-600", targetId: warningIssues.length > 0 || recommendedIssues.length > 0 ? "fix-recommendations" : undefined, targetLabel: "warning issues" },
+            ].map((stat, i) => {
+              const canNavigate = "targetId" in stat && stat.targetId && Number(stat.value) > 0;
+              if (canNavigate) {
+                return (
+                  <button
+                    key={stat.label}
+                    type="button"
+                    onClick={() => scrollToSection(stat.targetId as string)}
+                    aria-label={`${stat.value} ${stat.label.toLowerCase()} — jump to ${stat.targetLabel}`}
+                    className={`group border-b-2 border-[#1a1a1a] p-4 text-left transition-colors cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#1a1a1a] ${i < 3 ? "sm:border-r-2" : ""} hover:bg-[#FFFBF0]`}
+                  >
+                    <div className="flex items-center gap-2"><stat.icon className={`size-4 ${stat.color}`} /><span className="text-xs font-bold text-[#1a1a1a]/50 uppercase tracking-wider">{stat.label}</span><ArrowDown className="ml-auto size-3.5 text-[#1a1a1a]/30 transition-transform group-hover:translate-y-0.5 group-focus-visible:translate-y-0.5" aria-hidden="true" /></div>
+                    <div className={`mt-2 text-3xl font-black ${stat.color}`}>{stat.value}</div>
+                  </button>
+                );
+              }
+              return (
+                <div key={stat.label} className={`border-b-2 border-[#1a1a1a] p-4 ${i < 3 ? "sm:border-r-2" : ""}`}>
+                  <div className="flex items-center gap-2"><stat.icon className={`size-4 ${stat.color}`} /><span className="text-xs font-bold text-[#1a1a1a]/50 uppercase tracking-wider">{stat.label}</span></div>
+                  <div className={`mt-2 text-3xl font-black ${stat.color}`}>{stat.value}</div>
+                </div>
+              );
+            })}
           </div>
         </div>
       </section>
 
       {/* Fix These First */}
       {criticalIssues.length > 0 && (
-        <section className="border-b-2 border-[#1a1a1a] bg-white">
+        <section id="fix-these-first" className="border-b-2 border-[#1a1a1a] bg-white">
           <div className="mx-auto max-w-5xl px-4 py-6 sm:px-6">
             <div className="flex items-center gap-2 mb-4"><Target className="size-5 text-red-600" /><h2 className="text-lg font-black">Fix These First</h2><span className="border-2 border-red-300 bg-red-100 px-2 py-0.5 text-[10px] font-bold text-red-600">Priority</span></div>
             <p className="text-xs text-[#1a1a1a]/50 mb-4">These issues have the highest impact on your health score and should be addressed immediately.</p>
