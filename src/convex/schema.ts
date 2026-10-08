@@ -21,6 +21,13 @@ const categoryScoreValidator = v.object({
   failed: v.number(),
   warnings: v.number(),
   notChecked: v.number(),
+  // Evidence-based scoring extensions (optional so old reports still load)
+  applicable: v.optional(v.number()),
+  unverified: v.optional(v.number()),
+  notApplicable: v.optional(v.number()),
+  hasScore: v.optional(v.boolean()),
+  formula: v.optional(v.string()),
+  factors: v.optional(v.array(v.string())),
 });
 
 const issueValidator = v.object({
@@ -30,6 +37,45 @@ const issueValidator = v.object({
   message: v.string(),
   whyItMatters: v.string(),
   howToFix: v.string(),
+  // Evidence trail (optional so old reports still load)
+  evidence: v.optional(v.string()),
+  evidenceUrl: v.optional(v.string()),
+  stage: v.optional(v.string()),
+  method: v.optional(v.union(v.literal("http"), v.literal("tls"), v.literal("browser"))),
+  checkKey: v.optional(v.string()),
+  detectedAt: v.optional(v.number()),
+  confirmed: v.optional(v.boolean()),
+  status: v.optional(v.union(v.literal("fail"), v.literal("warning"), v.literal("unable-to-verify"))),
+});
+
+const scanSummaryValidator = v.object({
+  completeness: v.union(v.literal("complete"), v.literal("partial"), v.literal("blocked")),
+  limitations: v.array(v.string()),
+  requestedUrl: v.string(),
+  finalUrl: v.string(),
+  status: v.number(),
+  redirects: v.number(),
+  redirectChain: v.array(v.string()),
+  contentType: v.optional(v.string()),
+  durationMs: v.number(),
+  method: v.string(),
+  browserChecks: v.string(),
+  blocked: v.boolean(),
+  blockReason: v.optional(v.string()),
+  notHtml: v.boolean(),
+  incomplete: v.boolean(),
+  counts: v.object({
+    passed: v.number(),
+    failed: v.number(),
+    warnings: v.number(),
+    notApplicable: v.number(),
+    unverified: v.number(),
+    total: v.number(),
+  }),
+  categoryFormula: v.string(),
+  overallFormula: v.string(),
+  performanceBasis: v.string(),
+  overallScored: v.boolean(),
 });
 
 const quickWinValidator = v.object({
@@ -169,6 +215,10 @@ const schema = defineSchema(
       totalPassed: v.number(),
       totalFailed: v.number(),
       totalWarnings: v.number(),
+      totalUnverified: v.optional(v.number()),
+      totalNotApplicable: v.optional(v.number()),
+      overallScored: v.optional(v.boolean()),
+      summary: v.optional(scanSummaryValidator),
 
       scannedAt: v.number(),
     })

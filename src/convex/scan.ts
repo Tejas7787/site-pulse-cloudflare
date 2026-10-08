@@ -2,7 +2,10 @@
 
 import { v } from "convex/values";
 import { action } from "./_generated/server";
-import type { Issue, Priority, Severity, CheckResult, CategoryScore, QuickWin, SSLInfo, CookieInfo, MixedContent, ServerInfo, SiteIdentity } from "../types/scan";
+import type { Issue, Priority, Severity, CheckResult, CategoryScore, QuickWin, SSLInfo, CookieInfo, MixedContent, ServerInfo, SiteIdentity, ScanSummary } from "../types/scan";
+import { scoreCategory, overallScore, CATEGORY_SCORE_FORMULA, OVERALL_SCORE_FORMULA } from "../lib/scoring";
+import { fetchTarget, detectBlock, isHtmlResponse } from "../lib/fetchTarget";
+import { makeFinding, type FindingInput } from "../lib/findings";
 import tls from "node:tls";
 
 // ── Helpers ──────────────────────────────────────────────────────────
@@ -24,17 +27,6 @@ function scoreToGrade(score: number): string {
 
 function clamp(v: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, v));
-}
-
-function makeCategoryScore(checks: Record<string, CheckResult>): CategoryScore {
-  const vals = Object.values(checks);
-  return {
-    score: 0,
-    passed: vals.filter((v) => v === "pass").length,
-    failed: vals.filter((v) => v === "fail").length,
-    warnings: vals.filter((v) => v === "warn").length,
-    notChecked: vals.filter((v) => v === "not-checked").length,
-  };
 }
 
 // ── SSRF Protection ──────────────────────────────────────────────────
@@ -91,17 +83,6 @@ async function isUrlSafe(urlStr: string): Promise<boolean> {
 
 // ── Issue Builder ────────────────────────────────────────────────────
 
-function makeIssue(
-  category: string,
-  severity: Severity,
-  priority: Priority,
-  message: string,
-  whyItMatters: string,
-  howToFix: string,
-): Issue {
-  return { category, severity, priority, message, whyItMatters, howToFix };
-}
-
 // ── Priority Assignment ──────────────────────────────────────────────
 
 function assignPriority(
@@ -114,9 +95,9 @@ function assignPriority(
   // Critical: do today
   if (
     checkKey === "https" ||
-    checkKey === "header-csp" ||
-    checkKey === "http-status" && result === "fail" ||
-    checkKey === "response-time" && result === "fail"
+    (checkKey === "header-csp" && result === "fail") ||
+    (checkKey === "http-status" && result === "fail") ||
+    (checkKey === "response-time" && result === "fail")
   ) return "critical";
 
   // Important: do this week
@@ -175,69 +156,99 @@ export const scanWebsite = action({
     const accessibilityChecks: Record<string, CheckResult> = {};
     const technicalHealthChecks: Record<string, CheckResult> = {};
 
+    const scannedAtMs = Date.now();
+    let evidenceUrl = parsedUrl.href;
+    // Every finding carries evidence: by default the message itself IS the
+    // observation; pass `meta` to attach the exact evidence, stage, method,
+    // check key or a "potential risk" (confirmed: false) marker.
     const addIssue = (
       cat: string, sev: Severity, pri: Priority, msg: string, why: string, fix: string,
-    ) => { issues.push(makeIssue(cat, sev, pri, msg, why, fix)); };
+      meta?: Partial<FindingInput>,
+    ) => {
+      issues.push(makeFinding({
+        category: cat,
+        severity: sev,
+        priority: pri,
+        message: msg,
+        whyItMatters: why,
+        howToFix: fix,
+        evidence: msg,
+        evidenceUrl,
+        detectedAt: scannedAtMs,
+        ...meta,
+      }));
+    };
 
-    // 3. Fetch with redirect tracking
-    const redirectChain: string[] = [];
-    let currentUrl = parsedUrl.href;
-    let status = 0;
-    let finalResponse: Response | null = null;
-    const maxRedirects = 10;
-    const startTime = Date.now();
-
-    for (let i = 0; i <= maxRedirects; i++) {
-      try {
-        finalResponse = await fetch(currentUrl, {
-          method: "GET",
-          headers: {
-            "User-Agent": "SitePulse/1.0 (+https://sitepulse.dev) Website-Health-Scanner",
-            Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-          },
-          redirect: "manual",
-          signal: AbortSignal.timeout(12_000),
-        });
-        status = finalResponse.status;
-        if (status >= 300 && status < 400) {
-          const location = finalResponse.headers.get("Location");
-          if (!location) break;
-          redirectChain.push(currentUrl);
-          currentUrl = new URL(location, currentUrl).href;
-          if (!(await isUrlSafe(currentUrl))) {
-            throw new Error("Redirect target is a private or restricted address.");
-          }
-        } else { break; }
-      } catch (err) {
-        if (i === 0) {
-          const isTimeout = (err instanceof Error && /timeout/i.test(err.message));
-          if (isTimeout) throw new Error("The website took too long to respond. It may be down or blocking health checks.");
-          throw new Error(`Could not connect to ${parsedUrl.href}. Please verify the URL and try again.`);
+    // 3. Controlled fetch — records requested URL, redirect chain, final URL,
+    // status, response headers, content type and request duration.
+    const outcome = await fetchTarget(parsedUrl.href, {
+      maxRedirects: 10,
+      timeoutMs: 12_000,
+      maxBytes: 5 * 1024 * 1024,
+      assertSafe: async (candidate) => {
+        if (!(await isUrlSafe(candidate))) {
+          throw new Error("Redirect target is a private or restricted address.");
         }
-        break;
-      }
-    }
+      },
+    });
+    if (!outcome.ok) throw new Error(outcome.message);
 
-    const responseTime = Date.now() - startTime;
-    const finalUrl = currentUrl;
-    if (!finalResponse) throw new Error("Failed to get a response from the server.");
+    const target = outcome.fetch;
+    const status = target.status;
+    const finalUrl = target.finalUrl;
+    const responseTime = target.durationMs;
+    const redirectChain = target.chain.map((hop) => hop.url);
+    evidenceUrl = finalUrl;
 
-    // 4. Read page content (max5MB)
-    let pageSize = 0;
-    let pageContent = "";
-    try {
-      const arrayBuffer = await finalResponse.arrayBuffer();
-      pageSize = arrayBuffer.byteLength;
-      if (pageSize >5 * 1024 * 1024) {
-        throw new Error("The page is too large to analyze (over5 MB). Try a different page.");
-      }
-      pageContent = new TextDecoder("utf-8", { fatal: false }).decode(arrayBuffer);
-    } catch (err) {
-      if (err instanceof Error && err.message.includes("too large")) throw err;
-    }
+    // 4. Inspect the FINAL response body (never assume the first URL served
+    // the page) and decide what can actually be verified.
+    const pageSize = target.bytes;
+    const pageContent = target.body;
+    const headers = target.headers;
+    const headerSnapshot = target.headerSnapshot;
 
     const html = pageContent.toLowerCase();
     const hasHtml = html.includes("<html") || html.includes("<!doctype");
+
+    // ── HTML attribute helpers ──────────────────────────────────────────
+    // Real-world (especially minified) HTML writes attribute values WITHOUT
+    // quotes: <html lang=en>, <meta name=viewport …>. Quoted-only regexes
+    // mis-read those pages and emit false "missing attribute" findings, so
+    // every attribute parser below accepts quoted and unquoted values.
+    const attr = (name: string) =>
+      `(?<![\\w-])${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`;
+    const attrLit = (name: string, value: string) =>
+      `(?<![\\w-])${name}\\s*=\\s*(?:"${value}"|'${value}'|${value}(?=[\\s>/]))`;
+    const grab = (m: RegExpMatchArray | null | undefined): string | undefined =>
+      m ? (m[1] ?? m[2] ?? m[3])?.trim() || undefined : undefined;
+
+    // ── Scan completeness: blocks, non-HTML, incomplete responses ────────
+    const block = detectBlock(status, headerSnapshot, pageContent);
+    const hardBlock = block !== null && block.kind !== "not-found";
+    const notFound = block?.kind === "not-found";
+    const notHtml = !isHtmlResponse(target.contentType, pageContent);
+    const incomplete = target.truncated;
+    // HTML-derived checks only run on a complete, successful HTML response.
+    // Anything else is recorded as "Unable to Verify", never as a failure.
+    const contentUsable = !hardBlock && !notHtml && !incomplete && status >= 200 && status < 400;
+
+    const limitations: string[] = [];
+    if (hardBlock && block) {
+      limitations.push(`The scan was blocked: ${block.reason} Evidence: ${block.evidence}. Checks that depend on the page content or on the application's own response headers were marked "Unable to Verify" and are NOT reported as failures.`);
+    }
+    if (notFound) {
+      limitations.push("The URL returned HTTP 404 (page not found). Content checks describe an error page, so only fetch-level checks were evaluated.");
+    } else if (status >= 400 && !hardBlock) {
+      limitations.push(`The final response was HTTP ${status}. Content checks were not run; only fetch-level checks were evaluated.`);
+    } else if (status >= 300 && status < 400) {
+      limitations.push(`The redirect chain ended on a redirect response (HTTP ${status}) instead of a final page, so content checks were not run.`);
+    }
+    if (notHtml) {
+      limitations.push(`The final response is not an HTML document (content-type: ${target.contentType ?? "unknown"}). Content checks were not run.`);
+    }
+    if (incomplete) {
+      limitations.push("The response body was incomplete when it arrived, so content checks were marked \"Unable to Verify\".");
+    }
 
     // ══════════════════════════════════════════════════════════════════
     // PERFORMANCE SCORING (weighted)
@@ -265,6 +276,11 @@ export const scanWebsite = action({
         rtScore < 40
           ? "Enable server-side caching (Redis, Memcached), use a CDN like Cloudflare, optimize database queries, and consider upgrading your hosting plan."
           : "Review server response times, enable gzip/brotli compression, and reduce server-side processing.",
+        {
+          checkKey: "response-time",
+          stage: "fetch",
+          evidence: `Single HTTP GET to ${finalUrl} completed in ${responseTime}ms (${redirectChain.length} redirect hop(s)). This is server response timing — not full page-load performance.`,
+        },
       );
     }
 
@@ -287,18 +303,23 @@ export const scanWebsite = action({
           ? "Large HTML files slow down initial page rendering. Users on mobile connections will wait longer, and search engines may deprioritize slow pages."
           : "Reducing page size improves load times, especially on mobile networks.",
         "Minify HTML, remove unnecessary comments and whitespace, reduce inline styles and scripts, and move large content to external files.",
+        {
+          checkKey: "page-size",
+          stage: "html",
+          evidence: `The final HTML document is ${formatBytes(pageSize)} (${pageSize} bytes).`,
+        },
       );
     }
 
     // Image count
     const imgMatches = html.match(/<img[\s>]/g);
     const imageCount = imgMatches ? imgMatches.length : 0;
-    performanceChecks["image-count"] = imageCount > 0 ? "pass" : "not-checked";
+    performanceChecks["image-count"] = imageCount > 0 ? "pass" : "na";
 
     // External resources
     const scriptMatches = html.match(/<script[\s>]/g);
     const styleMatches = html.match(/<style[\s>]/g);
-    const linkStylesheetMatches = html.match(/rel=["']stylesheet["']/g);
+    const linkStylesheetMatches = html.match(new RegExp(`(?<![\\w-])rel\\s*=\\s*(?:"stylesheet"|'stylesheet'|stylesheet(?=[\\s>/]))`, "gi"));
     const scriptCount = scriptMatches ? scriptMatches.length : 0;
     const styleCount = (styleMatches ? styleMatches.length : 0) + (linkStylesheetMatches ? linkStylesheetMatches.length : 0);
     const totalResources = scriptCount + styleCount;
@@ -311,12 +332,14 @@ export const scanWebsite = action({
         `Too many external resources (${totalResources} scripts/stylesheets).`,
         "Each external resource requires a separate HTTP request, which adds to total load time. Too many scripts also block page rendering.",
         "Combine and minify CSS/JS files, remove unused code, load non-critical scripts asynchronously, and use a bundler like Vite or webpack.",
+        { checkKey: "external-resources", stage: "html", evidence: `${scriptCount} <script> and ${styleCount} stylesheet/style blocks observed in the final HTML (total ${totalResources}).` },
       );
     } else if (totalResources > 10) {
       addIssue("Performance", "info", "nice-to-have",
         `${totalResources} external resources detected.`,
         "While not excessive, reducing external resources can further improve page load speed.",
         "Audit your scripts and stylesheets for unused code and remove or consolidate where possible.",
+        { checkKey: "external-resources", stage: "html", evidence: `${scriptCount} <script> and ${styleCount} stylesheet/style blocks observed in the final HTML (total ${totalResources}).` },
       );
     }
 
@@ -329,6 +352,7 @@ export const scanWebsite = action({
         `Page redirects ${redirectChain.length} time(s).`,
         "Each redirect adds a full round-trip delay before the browser receives content.",
         "Link directly to the final URL. If you must redirect, aim for a single redirect at most.",
+        { checkKey: "redirects", stage: "fetch", evidence: `${redirectChain.length} redirect(s) observed: ${[...redirectChain, finalUrl].join(" → ")}` },
       );
     } else {
       performanceChecks["redirects"] = "fail";
@@ -336,6 +360,7 @@ export const scanWebsite = action({
         `Too many redirects (${redirectChain.length}).`,
         "Multiple redirects create a chain of server delays. Each redirect adds 100-300ms of latency.",
         "Point users directly to the final URL. Audit your redirect rules and eliminate unnecessary hops.",
+        { checkKey: "redirects", stage: "fetch", evidence: `${redirectChain.length} redirects observed: ${[...redirectChain, finalUrl].join(" → ")}` },
       );
     }
 
@@ -376,13 +401,20 @@ export const scanWebsite = action({
         title
           ? `Adjust your title to 30–60 characters. Current: "${title.slice(0, 50)}${title.length > 50 ? "…" : ""}"`
           : "Add a <title> tag inside your <head> that accurately describes the page in 30–60 characters.",
+        {
+          checkKey: "title",
+          stage: "html",
+          evidence: title
+            ? `Observed <title> in the final HTML: "${title}" (${titleLength} characters).`
+            : "No <title> element found in the final HTML document.",
+        },
       );
     }
 
     const descMatch =
-      pageContent.match(/<meta\s+[^>]*name=["']description["'][^>]*content=["']([^"']*)["']/i) ||
-      pageContent.match(/<meta\s+[^>]*content=["']([^"']*)["'][^>]*name=["']description["']/i);
-    const description = descMatch?.[1]?.trim() || undefined;
+      pageContent.match(new RegExp(`<meta\\s[^>]*${attrLit("name", "description")}[^>]*${attr("content")}`, "i")) ||
+      pageContent.match(new RegExp(`<meta\\s[^>]*${attr("content")}[^>]*${attrLit("name", "description")}`, "i"));
+    const description = grab(descMatch);
     const descriptionLength = description?.length ?? 0;
 
     // Meta description: exists+120-160=100, exists+wrong=60, missing=0
@@ -405,6 +437,13 @@ export const scanWebsite = action({
         description
           ? "Adjust your meta description to 120–160 characters for optimal display in search results."
           : 'Add <meta name="description" content="Your compelling 120–160 character description"> inside your <head>.',
+        {
+          checkKey: "meta-description",
+          stage: "html",
+          evidence: description
+            ? `Observed meta description (${descriptionLength} characters): "${description.slice(0, 100)}${descriptionLength > 100 ? "…" : ""}"`
+            : 'No <meta name="description"> found in the final HTML document.',
+        },
       );
     }
 
@@ -431,6 +470,7 @@ export const scanWebsite = action({
         h1Count === 0
           ? 'Add exactly one <h1> tag that clearly describes the page content.'
           : "Keep only the most important heading as H1 and convert the others to H2 or H3.",
+        { checkKey: "h1-tag", stage: "html", evidence: `${h1Count} <h1> element(s) found in the final HTML document.` },
       );
     }
 
@@ -458,9 +498,9 @@ export const scanWebsite = action({
 
     // Canonical: present=100, missing=50
     const canonicalMatch =
-      pageContent.match(/<link\s+[^>]*rel=["']canonical["'][^>]*href=["']([^"']*)["']/i) ||
-      pageContent.match(/<link\s+[^>]*href=["']([^"']*)["'][^>]*rel=["']canonical["']/i);
-    const canonicalUrl = canonicalMatch?.[1]?.trim() || undefined;
+      pageContent.match(new RegExp(`<link\\s[^>]*${attrLit("rel", "canonical")}[^>]*${attr("href")}`, "i")) ||
+      pageContent.match(new RegExp(`<link\\s[^>]*${attr("href")}[^>]*${attrLit("rel", "canonical")}`, "i"));
+    const canonicalUrl = grab(canonicalMatch);
     seoChecks["canonical-tag"] = canonicalUrl ? "pass" : "warn";
 
     if (!canonicalUrl) {
@@ -468,12 +508,13 @@ export const scanWebsite = action({
         "No canonical tag found.",
         "Without a canonical tag, search engines may index duplicate versions of the same page (with/without www, trailing slashes, etc.), diluting your SEO authority.",
         'Add <link rel="canonical" href="https://yourdomain.com/page"> inside your <head> to point to the preferred version of the page.',
+        { checkKey: "canonical-tag", stage: "html", evidence: "No <link rel=\"canonical\"> element found in the final HTML document." },
       );
     }
 
     // Robots meta
-    const robotsMetaMatch = html.match(/<meta\s+[^>]*name=["']robots["'][^>]*content=["']([^"']*)["']/i);
-    const robotsMetaContent = robotsMetaMatch?.[1]?.toLowerCase() || "";
+    const robotsMetaMatch = html.match(new RegExp(`<meta\\s[^>]*${attrLit("name", "robots")}[^>]*${attr("content")}`, "i"));
+    const robotsMetaContent = (grab(robotsMetaMatch) || "").toLowerCase();
     const hasRobotsMeta = robotsMetaContent.length > 0;
     if (!hasRobotsMeta || !robotsMetaContent.includes("noindex")) {
       seoChecks["robots-meta"] = "pass";
@@ -483,23 +524,34 @@ export const scanWebsite = action({
         'Page has a "noindex" robots meta tag.',
         "The noindex directive tells search engines to exclude this page from search results. If this is unintentional, your page will be invisible to anyone searching for it.",
         'Remove the noindex directive from your robots meta tag, or change it to <meta name="robots" content="index, follow">.',
+        { checkKey: "robots-meta", stage: "html", evidence: `Observed <meta name="robots" content="${robotsMetaContent}"> in the final HTML document.` },
       );
     }
 
     // Sitemap & robots.txt
-    const origin = parsedUrl.origin;
+    // Probe origin: use the FINAL URL's origin — if the site redirected to a
+    // different host/scheme, robots.txt belongs there, not at the old origin.
+    const origin = new URL(finalUrl).origin;
     let robotsTxtAvailable: boolean | null = null;
     let sitemapXmlAvailable: boolean | null = null;
 
     try {
-      const robotsResp = await fetch(`${origin}/robots.txt`, { method: "GET", redirect: "manual", signal: AbortSignal.timeout(5_000) });
-      robotsTxtAvailable = robotsResp.status === 200;
-      seoChecks["robots-txt"] = robotsTxtAvailable ? "pass" : "warn";
-      if (!robotsTxtAvailable) {
+      const robotsResp = await fetch(`${origin}/robots.txt`, { method: "GET", redirect: "follow", signal: AbortSignal.timeout(5_000) });
+      if (robotsResp.status === 200) {
+        robotsTxtAvailable = true;
+        seoChecks["robots-txt"] = "pass";
+      } else if (robotsResp.status === 403 || robotsResp.status === 429 || robotsResp.status >= 500) {
+        // The probe itself was refused → Unable to Verify, not a failure.
+        robotsTxtAvailable = null;
+        seoChecks["robots-txt"] = "not-checked";
+      } else {
+        robotsTxtAvailable = false;
+        seoChecks["robots-txt"] = "warn";
         addIssue("SEO", "info", "nice-to-have",
           "No robots.txt file found.",
           "A robots.txt file helps search engines understand which pages to crawl. While not strictly required, it's considered best practice.",
           'Create a robots.txt file at your site root (e.g., https://yourdomain.com/robots.txt) with basic crawl directives.',
+          { checkKey: "robots-txt", stage: "origin-probe", evidence: `GET ${origin}/robots.txt returned HTTP ${robotsResp.status}.` },
         );
       }
     } catch {
@@ -508,14 +560,21 @@ export const scanWebsite = action({
     }
 
     try {
-      const sitemapResp = await fetch(`${origin}/sitemap.xml`, { method: "GET", redirect: "manual", signal: AbortSignal.timeout(5_000) });
-      sitemapXmlAvailable = sitemapResp.status === 200;
-      seoChecks["sitemap-xml"] = sitemapXmlAvailable ? "pass" : "warn";
-      if (!sitemapXmlAvailable) {
+      const sitemapResp = await fetch(`${origin}/sitemap.xml`, { method: "GET", redirect: "follow", signal: AbortSignal.timeout(5_000) });
+      if (sitemapResp.status === 200) {
+        sitemapXmlAvailable = true;
+        seoChecks["sitemap-xml"] = "pass";
+      } else if (sitemapResp.status === 403 || sitemapResp.status === 429 || sitemapResp.status >= 500) {
+        sitemapXmlAvailable = null;
+        seoChecks["sitemap-xml"] = "not-checked";
+      } else {
+        sitemapXmlAvailable = false;
+        seoChecks["sitemap-xml"] = "warn";
         addIssue("SEO", "info", "nice-to-have",
           "No sitemap.xml found.",
           "A sitemap helps search engines discover all your pages, especially for large sites or pages not well-linked internally.",
           'Generate a sitemap.xml and submit it to Google Search Console and Bing Webmaster Tools.',
+          { checkKey: "sitemap-xml", stage: "origin-probe", evidence: `GET ${origin}/sitemap.xml returned HTTP ${sitemapResp.status}.` },
         );
       }
     } catch {
@@ -535,20 +594,33 @@ export const scanWebsite = action({
         "Website does not use HTTPS.",
         "Without HTTPS, all data between your server and visitors is transmitted in plain text. Login credentials, personal data, and cookies can be intercepted by attackers. Modern browsers warn users about non-HTTPS sites.",
         "Install a free SSL certificate from Let's Encrypt, configure your web server to redirect HTTP to HTTPS, and update all internal links to use HTTPS.",
+        { checkKey: "https", stage: "fetch", evidence: `The final URL ${finalUrl} uses plain http://.` },
       );
     }
 
-    // HTTP→HTTPS redirect
-    if (parsedUrl.protocol === "http:" && finalUrl.startsWith("https://")) {
-      securityChecks["http-to-https-redirect"] = "pass";
-    } else if (parsedUrl.protocol === "http:") {
-      securityChecks["http-to-https-redirect"] = "fail";
+    // HTTP→HTTPS redirect — only evaluated when an HTTP URL was actually
+    // requested. Requesting HTTPS does not prove HTTP upgrades, so that case
+    // is Not Applicable instead of an evidence-free "pass".
+    if (parsedUrl.protocol === "http:") {
+      const upgraded = finalUrl.startsWith("https://");
+      securityChecks["http-to-https-redirect"] = upgraded ? "pass" : "fail";
+      if (!upgraded) {
+        addIssue("Security", "warning", "important",
+          "HTTP requests are not upgraded to HTTPS.",
+          "Without an HTTP→HTTPS redirect, visitors who reach the plain-HTTP version of your site stay on an unencrypted connection.",
+          "Configure your server to 301-redirect all http:// requests to https://.",
+          {
+            checkKey: "http-to-https-redirect",
+            stage: "fetch",
+            evidence: `Requested ${parsedUrl.href} and ended at ${finalUrl} with HTTP ${status} — no upgrade to HTTPS observed.`,
+          },
+        );
+      }
     } else {
-      securityChecks["http-to-https-redirect"] = "pass";
+      securityChecks["http-to-https-redirect"] = "na";
     }
 
-    // Security headers (points-based)
-    const headers = finalResponse.headers;
+    // Security headers — inspected on the FINAL response's headers only.
     const securityHeaderDefs = [
       { name: "Content-Security-Policy", key: "csp", label: "Content-Security-Policy", points: 20 },
       { name: "Strict-Transport-Security", key: "hsts", label: "Strict-Transport-Security (HSTS)", points: 15 },
@@ -559,8 +631,8 @@ export const scanWebsite = action({
       { name: "X-Permitted-Cross-Domain-Policies", key: "xpcdp", label: "X-Permitted-Cross-Domain-Policies", points: 10 },
     ];
 
-    let securityPoints = isHttps ? 20 : 0; // base from HTTPS
-    const maxSecurityPoints = 20 + 20 + 15 + 15 + 15 + 15 + 10 + 10; // = 120, but cap at 100
+    let securityPoints = isHttps ? 20 : 0; // informational only (kept for sub-score display)
+    const maxSecurityPoints = 20 + 20 + 15 + 15 + 15 + 15 + 10 + 10; // reference value
 
     // Helper: check if a security header is declared via <meta http-equiv> in the HTML.
     // Per the HTML spec, ONLY Content-Security-Policy is valid via <meta http-equiv>.
@@ -569,7 +641,7 @@ export const scanWebsite = action({
     // limitations like no frame-ancestors/report-uri). No other security header
     // has a valid meta-equiv equivalent.
     function hasMetaEquivCSP(): boolean {
-      return /<meta\s+[^>]*http-equiv=["']Content-Security-Policy["'][^>]*>/i.test(pageContent);
+      return new RegExp(`<meta\\s[^>]*${attrLit("http-equiv", "content-security-policy")}[^>]*>`, "i").test(pageContent);
     }
 
     const headerIssues: Array<{ key: string; header: typeof securityHeaderDefs[0] }> = [];
@@ -587,8 +659,10 @@ export const scanWebsite = action({
       }
     }
 
-    // Emit issues for missing headers
-    for (const { header } of headerIssues) {
+    // Emit issues for missing headers. Evidence is the exact absence on the
+    // final response. A missing header is a configuration weakness — on its
+    // own it is not proof of an exploitable vulnerability.
+    for (const { key, header } of headerIssues) {
       const pri: Priority = header.key === "csp" ? "critical"
         : header.key === "hsts" ? "important"
         : header.key === "xfo" || header.key === "xcto" ? "recommended"
@@ -628,90 +702,110 @@ export const scanWebsite = action({
       const e = explanations[header.key] || { why: "This security header helps protect your site.", fix: `Add the ${header.label} header to your server configuration.` };
       addIssue("Security", severityForPriority(pri), pri,
         `Missing ${header.label} header.`,
-        e.why,
+        `${e.why} Note: a missing header is a configuration weakness — on its own it is not proof of an exploitable vulnerability.`,
         e.fix,
+        {
+          checkKey: key,
+          stage: "headers",
+          status: "fail",
+          evidence: `${header.label} was not present in the response headers of ${finalUrl} (HTTP ${status}).`,
+        },
       );
     }
 
     // ══════════════════════════════════════════════════════════════════
-    // ACCESSIBILITY SCORING (deductions from 100)
+    // ACCESSIBILITY — evidence-based checks only. The category score comes
+    // from the shared applicable-only formula below, so one failing check can
+    // no longer zero the whole category (the old per-image point deduction).
+    // Evidence source: static final HTML. A browser-rendered DOM is NOT
+    // available in this environment — see summary.browserChecks.
     // ══════════════════════════════════════════════════════════════════
 
-    let a11yScore = 100;
-
-    const imgNoAlt = html.match(/<img\s(?![^>]*\balt=)[^>]*>/g);
+    const imgNoAlt = html.match(/<img\s(?![^>]*(?<![\w-])alt\s*=)[^>]*>/g);
     const imagesWithoutAlt = imgNoAlt ? imgNoAlt.length : 0;
     if (imageCount === 0) {
-      accessibilityChecks["image-alt"] = "not-checked";
+      accessibilityChecks["image-alt"] = "na"; // page has no images to evaluate
     } else if (imagesWithoutAlt === 0) {
       accessibilityChecks["image-alt"] = "pass";
     } else {
       accessibilityChecks["image-alt"] = "fail";
-      a11yScore -= imagesWithoutAlt * 10;
       addIssue("Accessibility",
         imagesWithoutAlt > 3 ? "critical" : "warning",
         imagesWithoutAlt > 3 ? "important" : "recommended",
         `${imagesWithoutAlt} of ${imageCount} image(s) are missing alt text.`,
         "Screen readers cannot describe images without alt text, making your site unusable for visually impaired visitors. Search engines also use alt text to understand image content.",
         'Add descriptive alt attributes to each image: <img src="photo.jpg" alt="Description of the image">',
+        {
+          checkKey: "image-alt",
+          stage: "html",
+          evidence: `${imagesWithoutAlt} of ${imageCount} <img> elements in the final HTML have no alt attribute.`,
+        },
       );
     }
 
-    const hasLanguage = /<html\s+[^>]*lang=["'][^"']+["']/i.test(pageContent);
+    const hasLanguage = !!grab(pageContent.match(new RegExp(`<html\\s+[^>]*${attr("lang")}`, "i")));
     if (hasLanguage) {
       accessibilityChecks["html-lang"] = "pass";
     } else {
       accessibilityChecks["html-lang"] = "fail";
-      a11yScore -= 20;
       addIssue("Accessibility", "warning", "recommended",
         'The <html> tag is missing a lang attribute.',
         "Screen readers use the lang attribute to select the correct pronunciation. Without it, visually impaired users hear content read in the wrong language.",
         'Add the lang attribute to your HTML tag: <html lang="en">',
+        {
+          checkKey: "html-lang",
+          stage: "html",
+          evidence: "The <html> tag in the final HTML document has no lang attribute.",
+        },
       );
     }
 
     const inputMatches = html.match(/<input\s+[^>]*(?:type=["'](?:text|email|password|search|tel|url|number)["'])?[^>]*>/gi) || [];
     const labelMatches = html.match(/<label[\s>]/gi) || [];
-    const labelForMatches = html.match(/for=["'][^"']+["']/gi) || [];
+    const labelForMatches = html.match(new RegExp(`(?<![\\w-])for\\s*=\\s*(?:"[^"]+"|'[^']+'|[^\\s>]+)`, "gi")) || [];
     const hasFormLabels = labelMatches.length > 0 || labelForMatches.length > 0;
     const inputsWithoutLabels = inputMatches.length > 0 && !hasFormLabels ? inputMatches.length : 0;
 
     if (inputMatches.length === 0) {
-      accessibilityChecks["form-labels"] = "not-checked";
+      accessibilityChecks["form-labels"] = "na"; // no form inputs on this page
     } else if (inputsWithoutLabels === 0) {
       accessibilityChecks["form-labels"] = "pass";
     } else {
       accessibilityChecks["form-labels"] = "warn";
-      a11yScore -= inputsWithoutLabels * 10;
       addIssue("Accessibility", "warning", "recommended",
         `${inputsWithoutLabels} form input(s) may be missing associated labels.`,
         "Without labels, screen readers cannot tell users what each form field is for. This makes forms unusable for visually impaired visitors.",
         'Associate each input with a label: <label for="email">Email</label> <input id="email" type="email">',
+        {
+          checkKey: "form-labels",
+          stage: "html",
+          // Heuristic: aria-label/aria-labelledby cannot be fully evaluated
+          // without a browser, so this stays a potential risk, not a failure.
+          confirmed: false,
+          evidence: `${inputsWithoutLabels} of ${inputMatches.length} <input> elements have no <label> or for= association anywhere in the final HTML (aria-label/aria-labelledby not evaluated — no browser engine).`,
+        },
       );
     }
 
-    a11yScore = clamp(a11yScore, 0, 100);
-    if (a11yScore >= 80) accessibilityChecks["overall"] = "pass";
-    else if (a11yScore >= 50) accessibilityChecks["overall"] = "warn";
-    else accessibilityChecks["overall"] = "fail";
+    // No derived "overall" check: it would double-count the same evidence.
+    // The category score is computed from the checks above by the formula.
 
     // ══════════════════════════════════════════════════════════════════
     // TECHNICAL SCORING (points-based)
     // ══════════════════════════════════════════════════════════════════
 
-    let techScore = 0;
+    // (No per-item point system here: status is derived from observed values;
+    // the category score is computed later by the shared formula.)
 
     // Valid HTML structure: 30 points
     const hasDoctype = pageContent.toLowerCase().includes("<!doctype");
     const hasCharset =
-      /<meta\s+[^>]*charset=["']/i.test(pageContent) ||
-      /<meta\s+[^>]*http-equiv=["']content-type["']/i.test(pageContent);
+      new RegExp(`<meta\\s[^>]*${attr("charset")}`, "i").test(pageContent) ||
+      new RegExp(`<meta\\s[^>]*${attrLit("http-equiv", "content-type")}`, "i").test(pageContent);
     if (hasDoctype && hasCharset) {
-      techScore += 30;
       technicalHealthChecks["html-structure"] = "pass";
     } else if (!hasHtml) {
       technicalHealthChecks["html-structure"] = "not-checked";
-      techScore += 15; // partial credit for non-HTML
     } else {
       technicalHealthChecks["html-structure"] = "warn";
       addIssue("Technical Health", "info", "nice-to-have",
@@ -726,13 +820,11 @@ export const scanWebsite = action({
     }
 
     // Viewport: 20 points
-    const hasViewport = /<meta\s+[^>]*name=["']viewport["']/i.test(pageContent);
+    const hasViewport = new RegExp(`<meta\\s[^>]*${attrLit("name", "viewport")}`, "i").test(pageContent);
     if (hasViewport) {
-      techScore += 20;
       technicalHealthChecks["viewport"] = "pass";
     } else if (!hasHtml) {
       technicalHealthChecks["viewport"] = "not-checked";
-      techScore += 10;
     } else {
       technicalHealthChecks["viewport"] = "fail";
       addIssue("Technical Health", "critical", "important",
@@ -744,22 +836,18 @@ export const scanWebsite = action({
 
     // Charset: 20 points
     if (hasCharset) {
-      techScore += 20;
       technicalHealthChecks["charset"] = "pass";
     } else if (!hasHtml) {
       technicalHealthChecks["charset"] = "not-checked";
-      techScore += 10;
     } else {
       technicalHealthChecks["charset"] = "warn";
     }
 
     // Canonical: 15 points
     if (canonicalUrl) {
-      techScore += 15;
       technicalHealthChecks["canonical"] = "pass";
     } else if (!hasHtml) {
       technicalHealthChecks["canonical"] = "not-checked";
-      techScore += 7;
     } else {
       technicalHealthChecks["canonical"] = "warn";
     }
@@ -768,10 +856,8 @@ export const scanWebsite = action({
     const urlPath = parsedUrl.pathname;
     const hasCleanUrls = !parsedUrl.search && urlPath.split("/").filter(Boolean).length <= 4;
     if (hasCleanUrls) {
-      techScore += 15;
       technicalHealthChecks["clean-urls"] = "pass";
     } else {
-      techScore += 5;
       technicalHealthChecks["clean-urls"] = "warn";
       if (parsedUrl.search) {
         addIssue("Technical Health", "info", "nice-to-have",
@@ -784,15 +870,14 @@ export const scanWebsite = action({
 
     // HTTP status (technical component)
     if (status >= 200 && status < 300) {
-      techScore += 15; // bonus for good status
       technicalHealthChecks["http-status"] = "pass";
     } else if (status >= 300 && status < 400) {
-      techScore += 10;
       technicalHealthChecks["http-status"] = "warn";
       addIssue("Technical Health", "warning", "recommended",
         `Final response was a redirect (HTTP ${status}).`,
         "If the redirect chain doesn't resolve properly, users and search engines may not reach your intended page.",
         "Ensure the redirect chain resolves to a final 200 OK page. Update internal links to point to the final URL.",
+        { checkKey: "http-status", stage: "fetch", evidence: `The request to ${parsedUrl.href} ended on HTTP ${status} after ${redirectChain.length} redirect(s); final URL: ${finalUrl}.` },
       );
     } else if (status === 404) {
       technicalHealthChecks["http-status"] = "fail";
@@ -800,6 +885,7 @@ export const scanWebsite = action({
         "Page returned 404 Not Found.",
         "A 404 error means the page doesn't exist. Visitors who land here will leave immediately, and search engines will eventually drop the page from their index.",
         "Verify the URL is correct. If the page was moved, set up a 301 redirect to the new location.",
+        { checkKey: "http-status", stage: "fetch", evidence: `GET ${finalUrl} returned HTTP 404 Not Found.` },
       );
     } else if (status === 500) {
       technicalHealthChecks["http-status"] = "fail";
@@ -807,6 +893,7 @@ export const scanWebsite = action({
         "Server returned 500 Internal Server Error.",
         "A 500 error means your server crashed or encountered an unhandled error. The page is completely inaccessible to users and search engines.",
         "Check your server logs for the specific error. Common causes include database connection failures, PHP errors, or misconfigured server software.",
+        { checkKey: "http-status", stage: "fetch", evidence: `GET ${finalUrl} returned HTTP 500 Internal Server Error.` },
       );
     } else if (status >= 400) {
       technicalHealthChecks["http-status"] = "fail";
@@ -814,6 +901,7 @@ export const scanWebsite = action({
         `Server returned HTTP ${status}.`,
         "This HTTP status code indicates a server-side error that prevents the page from loading correctly.",
         "Investigate the server logs to identify and fix the root cause of this error.",
+        { checkKey: "http-status", stage: "fetch", evidence: `GET ${finalUrl} returned HTTP ${status}.` },
       );
     } else {
       technicalHealthChecks["http-status"] = "not-checked";
@@ -827,8 +915,6 @@ export const scanWebsite = action({
     } else {
       technicalHealthChecks["redirect-count"] = "fail";
     }
-
-    techScore = clamp(techScore, 0, 100);
 
     // ══════════════════════════════════════════════════════════════════
     // SSL CERTIFICATE ANALYSIS
@@ -869,31 +955,63 @@ export const scanWebsite = action({
         };
 
         // SSL scoring: valid=+10, expiring<30d=+5, expired=0
-        if (daysUntilExpiry > 30) sslScore = 100;
-        else if (daysUntilExpiry > 0) sslScore = 50;
-        else sslScore = 0;
+        if (daysUntilExpiry > 30) {
+          sslScore = 100;
+          securityChecks["ssl-valid"] = "pass";
+        } else if (daysUntilExpiry > 0) {
+          sslScore = 50;
+          securityChecks["ssl-valid"] = "warn";
+        } else {
+          sslScore = 0;
+          securityChecks["ssl-valid"] = "fail";
+        }
 
         if (daysUntilExpiry <= 0) {
           addIssue("Security", "critical", "critical",
             "SSL certificate has expired.",
             "An expired certificate causes browser warnings and breaks trust with visitors. Most users will see a security warning and leave immediately.",
             "Renew your SSL certificate immediately. Consider using auto-renewal services like Let's Encrypt to prevent future expirations.",
+            {
+              checkKey: "ssl-valid",
+              stage: "tls",
+              method: "tls",
+              evidence: `Certificate for ${parsedUrl.hostname} expired on ${expiryDate.toISOString()} (issuer: ${issuer}).`,
+            },
           );
         } else if (daysUntilExpiry <= 30) {
           addIssue("Security", "warning", "important",
             `SSL certificate expires in ${daysUntilExpiry} days (${expiryDate.toLocaleDateString()}).`,
             "An expiring certificate will soon trigger browser warnings, breaking trust with your visitors.",
             "Renew your SSL certificate before it expires. Enable auto-renewal to prevent future issues.",
+            {
+              checkKey: "ssl-valid",
+              stage: "tls",
+              method: "tls",
+              evidence: `Certificate for ${parsedUrl.hostname} is valid until ${expiryDate.toISOString()} — ${daysUntilExpiry} day(s) remaining (issuer: ${issuer}).`,
+            },
           );
         }
-      } catch {
+      } catch (err) {
         sslScore = 0;
+        // The certificate could not be inspected → Unable to Verify, not a failure.
+        securityChecks["ssl-valid"] = "not-checked";
         addIssue("Security", "warning", "important",
           "Could not verify SSL certificate.",
-          "The SSL certificate could not be checked. This might indicate a misconfiguration or connection issue.",
-          "Verify your SSL certificate is properly installed and the server is accessible on port 443.",
+          "The certificate could not be inspected from this environment, so no conclusion about the certificate is drawn.",
+          "Verify your SSL certificate is properly installed and the server is reachable on port 443.",
+          {
+            checkKey: "ssl-valid",
+            stage: "tls",
+            method: "tls",
+            status: "unable-to-verify",
+            confirmed: false,
+            evidence: `TLS handshake with ${parsedUrl.hostname}:443 did not yield a usable certificate: ${err instanceof Error ? err.message : String(err)}`,
+          },
         );
       }
+    } else {
+      // Plain-HTTP target: there is no certificate to inspect.
+      securityChecks["ssl-valid"] = "na";
     }
 
     // ══════════════════════════════════════════════════════════════════
@@ -908,22 +1026,24 @@ export const scanWebsite = action({
       if (rawCookie) setCookieHeaders.push(rawCookie);
     }
 
+    const finalCookieHost = new URL(finalUrl).hostname;
     for (const cookieStr of setCookieHeaders) {
       const parts = cookieStr.split(";").map((p) => p.trim());
       const nameValue = parts[0] || "";
       const name = nameValue.split("=")[0] || "";
       const lowerParts = parts.map((p) => p.toLowerCase());
+      const domainAttr = parts.find((p) => p.toLowerCase().startsWith("domain="))?.split("=")[1] || null;
       cookies.push({
         name,
         httpOnly: lowerParts.includes("httponly"),
         secure: lowerParts.includes("secure"),
         sameSite: lowerParts.find((p) => p.startsWith("samesite="))?.split("=")[1] || null,
-        domain: parts.find((p) => p.toLowerCase().startsWith("domain="))?.split("=")[1] || null,
+        domain: domainAttr,
       });
     }
 
     let cookiesWithIssues = 0;
-    let cookieScore = cookies.length > 0 ? 100 : -1; // -1 = not checked
+    let cookieScore = cookies.length > 0 ? 100 : -1; // -1 = no cookies observed
 
     for (const cookie of cookies) {
       const missingFlags: string[] = [];
@@ -933,13 +1053,27 @@ export const scanWebsite = action({
       if (missingFlags.length > 0) {
         cookiesWithIssues++;
         cookieScore = clamp(cookieScore - missingFlags.length * 3, 0, 100);
+        // First-party vs third-party: compare the cookie Domain attribute with
+        // the final page host. No Domain attribute ⇒ first-party (host-only).
+        const domainHost = cookie.domain ? cookie.domain.replace(/^\./, "").toLowerCase() : null;
+        const isThirdParty = domainHost !== null && domainHost !== finalCookieHost && !finalCookieHost.endsWith(`.${domainHost}`);
         addIssue("Security", "warning", "recommended",
           `Cookie "${cookie.name}" is missing security flags: ${missingFlags.join(", ")}.`,
           `Missing ${missingFlags.join(" and ")} flags makes the cookie vulnerable to theft via XSS attacks or CSRF.`,
           `Add the missing flags: Set-Cookie: ${cookie.name}=...; HttpOnly; Secure; SameSite=Lax`,
+          {
+            checkKey: "cookie-flags",
+            stage: "cookies",
+            evidence: `Set-Cookie observed on ${finalUrl}: "${cookie.name}" has no ${missingFlags.join(", ")} attribute (${isThirdParty ? `third-party cookie, Domain=${cookie.domain}` : "first-party cookie"}).`,
+          },
         );
       }
     }
+
+    // Cookie-flags check: only evaluated when cookies were actually observed.
+    if (cookies.length === 0) securityChecks["cookie-flags"] = "na";
+    else if (cookiesWithIssues === 0) securityChecks["cookie-flags"] = "pass";
+    else securityChecks["cookie-flags"] = cookiesWithIssues === cookies.length ? "fail" : "warn";
 
     // ══════════════════════════════════════════════════════════════════
     // MIXED CONTENT DETECTION
@@ -948,8 +1082,8 @@ export const scanWebsite = action({
     const mixedContent: MixedContent[] = [];
     let mixedContentScore = 100;
 
-    if (isHttps && hasHtml) {
-      // Find HTTP resources in src/href attributes
+    if (isHttps && hasHtml && contentUsable) {
+      // Find HTTP resources in src/href attributes of the FINAL HTML document
       const httpResourceRegex = /(src|href)=(['"])(http:\/\/[^'\"]+)\2/gi;
       let match;
       let lineNum = 1;
@@ -957,9 +1091,10 @@ export const scanWebsite = action({
 
       for (let li = 0; li < lines.length; li++) {
         const line = lines[li];
-        const lineMatches = line.matchAll(/(src|href)=(['"])(http:\/\/[^'\"]+)\2/gi);
+        const lineMatches = line.matchAll(/(?<![\w-])(src|href)\s*=\s*(?:["'](http:\/\/[^"']+)["']|(http:\/\/[^\s>]+))/gi);
         for (const m of lineMatches) {
-          const url = m[3];
+          const url = m[2] || m[3];
+          if (!url) continue;
           let type: MixedContent["type"] = "other";
           if (/\.js(\?|$)/i.test(url) || /script/i.test(m[0])) type = "script";
           else if (/\.css(\?|$)/i.test(url) || /stylesheet/i.test(m[0]) || /rel=["']stylesheet["']/i.test(m[0])) type = "stylesheet";
@@ -968,6 +1103,13 @@ export const scanWebsite = action({
         }
       }
     }
+
+    // Mixed-content check (only meaningful on a usable HTTPS HTML page)
+    securityChecks["mixed-content"] = !isHttps
+      ? "na"
+      : contentUsable
+        ? (mixedContent.length === 0 ? "pass" : "fail")
+        : "not-checked";
 
     if (mixedContent.length > 0) {
       mixedContentScore = clamp(100 - mixedContent.length * 15, 0, 100);
@@ -985,6 +1127,11 @@ export const scanWebsite = action({
         `Found ${mixedContent.length} mixed content resource(s) on HTTPS page: ${parts.join(", ")}.`,
         "Mixed content allows attackers to intercept or modify insecure resources on your HTTPS page, potentially injecting malicious code or stealing data.",
         "Change all HTTP URLs to HTTPS, or use protocol-relative URLs (//example.com). For external resources, ensure they support HTTPS.",
+        {
+          checkKey: "mixed-content",
+          stage: "html",
+          evidence: `${mixedContent.length} resource(s) in the final HTML of ${finalUrl} load over http:// — first: ${mixedContent[0].url}`,
+        },
       );
     }
 
@@ -1041,6 +1188,10 @@ export const scanWebsite = action({
         `Server technology is publicly visible: ${technology.join(", ")}.`,
         "Publicly disclosing server technology can help attackers identify known vulnerabilities for that specific stack.",
         "Remove or obfuscate server identification headers (Server, X-Powered-By) where possible.",
+        {
+          stage: "headers",
+          evidence: `Server: ${serverHeader ?? "absent"}${poweredByHeader ? `, X-Powered-By: ${poweredByHeader}` : ""} observed on ${finalUrl}.`,
+        },
       );
     }
 
@@ -1062,6 +1213,11 @@ export const scanWebsite = action({
         "No privacy policy link found.",
         "A privacy policy is required by law in many jurisdictions (GDPR, CCPA). It builds trust with users and protects you legally.",
         "Create and link a privacy policy page explaining how you collect, use, and protect user data.",
+        {
+          stage: "html",
+          confirmed: false,
+          evidence: `No privacy-policy link found in the fetched HTML of ${finalUrl}. Only this page was fetched, so absence elsewhere cannot be ruled out.`,
+        },
       );
     }
 
@@ -1070,79 +1226,152 @@ export const scanWebsite = action({
         "No terms of service link found.",
         "Terms of service set the legal framework for your website usage and protect your business.",
         "Create and link terms of service that outline the rules for using your site.",
+        {
+          stage: "html",
+          confirmed: false,
+          evidence: `No terms-of-service link found in the fetched HTML of ${finalUrl}. Only this page was fetched, so absence elsewhere cannot be ruled out.`,
+        },
       );
+    }
+
+    // ── Gate content-derived checks and findings ──────────────────────────
+    // If the page content could not be honestly inspected, HTML-derived
+    // checks become "Unable to Verify" and their findings are removed so no
+    // unverified result is ever presented as a confirmed failure.
+    if (!contentUsable) {
+      const contentChecksByCategory: Array<[Record<string, CheckResult>, string[]]> = [
+        [seoChecks, ["title", "meta-description", "h1-tag", "heading-structure", "canonical-tag", "robots-meta"]],
+        [accessibilityChecks, ["image-alt", "html-lang", "form-labels"]],
+        [technicalHealthChecks, ["html-structure", "viewport", "charset", "canonical"]],
+        [performanceChecks, ["page-size", "image-count", "external-resources"]],
+        [securityChecks, ["mixed-content"]],
+      ];
+      for (const [map, keys] of contentChecksByCategory) {
+        for (const key of keys) if (map[key] !== undefined) map[key] = "not-checked";
+      }
+      for (let i = issues.length - 1; i >= 0; i--) {
+        if (issues[i].stage === "html") issues.splice(i, 1);
+      }
+    }
+    if (hardBlock) {
+      // A bot-challenge/CDN response does not carry the application's own
+      // headers or cookies, so those checks cannot be verified either.
+      for (const key of Object.keys(securityChecks)) {
+        if (key.startsWith("header-") || key === "cookie-flags") securityChecks[key] = "not-checked";
+      }
+      seoChecks["robots-txt"] = "not-checked";
+      seoChecks["sitemap-xml"] = "not-checked";
+      cookies.length = 0;
+      cookiesWithIssues = 0;
+      cookieScore = -1;
+      for (let i = issues.length - 1; i >= 0; i--) {
+        const issueStage = issues[i].stage;
+        if (issueStage === "headers" || issueStage === "cookies" || issueStage === "origin-probe") issues.splice(i, 1);
+      }
     }
 
     // ══════════════════════════════════════════════════════════════════
     // SCORING SUMMARY
     // ══════════════════════════════════════════════════════════════════
 
-    // Performance: weighted average (response time 50%, page size 30%, http status 20%)
-    const perfScore = Math.round(rtScore * 0.5 + psScore * 0.3 + (performanceChecks["http-status"] === "pass" ? 100 : performanceChecks["http-status"] === "warn" ? 60 : 0) * 0.2);
+    // ── SCORING — shared, documented, applicable-only ──────────────────
+    // Every category uses the same formula:
+    //   score = round(100 × (passed + 0.5 × warnings) ÷ applicable)
+    // where applicable = passed + failed + warnings. "Unable to Verify" and
+    // "Not Applicable" checks are excluded entirely — incomplete data can
+    // never drag a category to 0/100 (hasScore=false ⇒ display "—").
+    const perfCatScore = scoreCategory(performanceChecks);
+    const seoCatScore = scoreCategory(seoChecks);
+    const secCatScore = scoreCategory(securityChecks);
+    const a11yCatScore = scoreCategory(accessibilityChecks);
+    const techCatScore = scoreCategory(technicalHealthChecks);
 
-    // SEO: weighted average across every check shown in the SEO category.
-    // Weights: title .20, description .20, H1 .15, headings .10, canonical .10,
-    // robots meta .05, robots.txt .10, sitemap.xml .10 (= 1.00).
-    // Checks that could not be performed count as neutral (50) so unreachable
-    // lookups neither reward nor punish.
-    const robotsTxtCheckScore = seoChecks["robots-txt"] === "pass" ? 100 : seoChecks["robots-txt"] === "not-checked" ? 50 : 0;
-    const sitemapXmlCheckScore = seoChecks["sitemap-xml"] === "pass" ? 100 : seoChecks["sitemap-xml"] === "not-checked" ? 50 : 0;
-    const seoScore = Math.round(
-      titleScore * 0.20 +
-      descScore * 0.20 +
-      h1Score * 0.15 +
-      headingScore * 0.10 +
-      (seoChecks["canonical-tag"] === "pass" ? 100 : 50) * 0.10 +
-      (seoChecks["robots-meta"] === "pass" ? 100 : 0) * 0.05 +
-      robotsTxtCheckScore * 0.10 +
-      sitemapXmlCheckScore * 0.10
-    );
+    const perfScore = perfCatScore.score;
+    const seoScore = seoCatScore.score;
+    const secScore = secCatScore.score;
+    const a11yScore = a11yCatScore.score;
+    const techScore = techCatScore.score;
 
-    // Security headers: points-based, capped at 100
-    const headerSecScore = clamp(Math.round((securityPoints / maxSecurityPoints) * 100), 0, 100);
+    // Informational sub-scores kept for display; they are already represented
+    // inside the Security category's ssl-valid / cookie-flags / mixed-content
+    // checks, so they no longer carry separate hidden weights.
+    const effectiveSslScore = sslInfo ? sslScore : 50;
+    const effectiveCookieScore = cookieScore >= 0 ? cookieScore : 50;
+    const effectiveMixedContentScore = isHttps ? mixedContentScore : 50;
 
-    // Sub-checks that cannot apply use a neutral 50 so they neither reward nor punish.
-    const effectiveSslScore = sslInfo ? sslScore : 50; // neutral if not HTTPS
-    const effectiveCookieScore = cookieScore >= 0 ? cookieScore : 50; // neutral if no cookies
-    const effectiveMixedContentScore = isHttps ? mixedContentScore : 50; // neutral if not HTTPS
-
-    // The Security category combines its four sub-areas with fixed weights:
-    // headers 55%, SSL certificate 20%, cookie flags 12.5%, mixed content 12.5%.
-    const secScore = Math.round(
-      headerSecScore * 0.55 +
-      effectiveSslScore * 0.20 +
-      effectiveCookieScore * 0.125 +
-      effectiveMixedContentScore * 0.125
-    );
-
-    // Overall: weighted by importance — exactly matching the weights shown on
-    // the report page: Security 30%, Performance 25%, SEO 25%,
-    // Technical Health 10%, Accessibility 10%. No other inputs.
-    const overallScore = Math.round(
-      secScore * 0.30 + perfScore * 0.25 + seoScore * 0.25 + techScore * 0.10 + a11yScore * 0.10
-    );
+    // Overall: weighted, renormalized over categories that HAVE a score.
+    // Weights: Security 30%, Performance 25%, SEO 25%, Technical Health 10%,
+    // Accessibility 10%.
+    const overallResult = overallScore({
+      Performance: perfCatScore.hasScore ? perfScore : null,
+      SEO: seoCatScore.hasScore ? seoScore : null,
+      Security: secCatScore.hasScore ? secScore : null,
+      "Technical Health": techCatScore.hasScore ? techScore : null,
+      Accessibility: a11yCatScore.hasScore ? a11yScore : null,
+    });
+    const overallScored = overallResult.score !== null;
+    const overallScoreValue = overallResult.score ?? 0;
 
     // Risk level
-    const riskLevel: "low" | "medium" | "high" | "critical" = overallScore >= 80 ? "low" : overallScore >= 60 ? "medium" : overallScore >= 40 ? "high" : "critical";
+    const riskLevel: "low" | "medium" | "high" | "critical" =
+      !overallScored ? "medium"
+      : overallScoreValue >= 80 ? "low"
+      : overallScoreValue >= 60 ? "medium"
+      : overallScoreValue >= 40 ? "high"
+      : "critical";
 
     // Industry comparison (deterministic estimate derived from the score itself,
     // so identical results always display identically)
-    const betterThanPercent = Math.min(99, Math.max(1, Math.round(overallScore * 0.9)));
+    const betterThanPercent = Math.min(99, Math.max(1, Math.round(overallScoreValue * 0.9)));
 
-    // Build category score objects
-    const perfCatScore = makeCategoryScore(performanceChecks); perfCatScore.score = perfScore;
-    const seoCatScore = makeCategoryScore(seoChecks); seoCatScore.score = seoScore;
-    const secCatScore = makeCategoryScore(securityChecks); secCatScore.score = secScore;
-    const a11yCatScore = makeCategoryScore(accessibilityChecks); a11yCatScore.score = a11yScore;
-    const techCatScore = makeCategoryScore(technicalHealthChecks); techCatScore.score = techScore;
+    // Aggregate counts — must match the actual checks exactly (all five states)
+    const catScores = [perfCatScore, seoCatScore, secCatScore, a11yCatScore, techCatScore];
+    const sum = (pick: (c: CategoryScore) => number) => catScores.reduce((acc, c) => acc + pick(c), 0);
+    const totalPassed = sum((c) => c.passed);
+    const totalFailed = sum((c) => c.failed);
+    const totalWarnings = sum((c) => c.warnings);
+    const totalUnverified = sum((c) => c.unverified ?? c.notChecked);
+    const totalNotApplicable = sum((c) => c.notApplicable ?? 0);
+    // "Checks run" = checks evaluated against observed evidence
+    const totalChecksCompleted = totalPassed + totalFailed + totalWarnings;
 
-    // Aggregate counts
-    const allChecks = { ...performanceChecks, ...seoChecks, ...securityChecks, ...accessibilityChecks, ...technicalHealthChecks };
-    const allVals = Object.values(allChecks);
-    const totalPassed = allVals.filter((v) => v === "pass").length;
-    const totalFailed = allVals.filter((v) => v === "fail").length;
-    const totalWarnings = allVals.filter((v) => v === "warn").length;
-    const totalChecksCompleted = allVals.filter((v) => v !== "not-checked").length;
+    // ── Transparent report summary ──────────────────────────────────────
+    const completeness: ScanSummary["completeness"] = hardBlock
+      ? "blocked"
+      : contentUsable && totalUnverified === 0 && limitations.length === 0
+        ? "complete"
+        : "partial";
+    const summary: ScanSummary = {
+      completeness,
+      limitations,
+      requestedUrl: parsedUrl.href,
+      finalUrl,
+      status,
+      redirects: redirectChain.length,
+      redirectChain,
+      contentType: target.contentType ?? undefined,
+      durationMs: responseTime,
+      method: "http",
+      browserChecks:
+        "Not run — no browser engine (Playwright/Chromium) is available in this execution environment. Rendered-DOM checks (JS-injected content, console errors, computed accessibility, lab performance metrics such as LCP/CLS) were NOT performed; results that would need a browser are reported as Unable to Verify instead of guessed. HTTP-derived results are labeled with their method throughout this report.",
+      blocked: hardBlock,
+      blockReason: block?.reason ?? undefined,
+      notHtml,
+      incomplete,
+      counts: {
+        passed: totalPassed,
+        failed: totalFailed,
+        warnings: totalWarnings,
+        notApplicable: totalNotApplicable,
+        unverified: totalUnverified,
+        total: totalChecksCompleted + totalUnverified + totalNotApplicable,
+      },
+      categoryFormula: CATEGORY_SCORE_FORMULA,
+      overallFormula: overallResult.formula,
+      performanceBasis:
+        "Measured with a single server-side HTTP GET: response duration (including redirects), status, headers and HTML byte size. This is server response timing — NOT a browser lab test and not full page-load performance; LCP/FCP/CLS/TTI are not measured without a browser engine.",
+      overallScored,
+    };
 
     // Top 5 issues sorted by priority then severity
     const priorityOrder: Record<Priority, number> = { critical: 0, important: 1, recommended: 2, "nice-to-have": 3 };
@@ -1223,8 +1452,9 @@ export const scanWebsite = action({
       hasReferrerPolicy: securityChecks["header-rp"] === "pass",
       hasPermissionsPolicy: securityChecks["header-pp"] === "pass",
 
-      score: overallScore,
-      grade: scoreToGrade(overallScore),
+      score: overallScoreValue,
+      grade: scoreToGrade(overallScoreValue),
+      overallScored,
       riskLevel,
       betterThanPercent,
 
@@ -1258,8 +1488,11 @@ export const scanWebsite = action({
       totalPassed,
       totalFailed,
       totalWarnings,
+      totalUnverified,
+      totalNotApplicable,
+      summary,
 
-      scannedAt: Date.now(),
+      scannedAt: scannedAtMs,
     };
   },
 });

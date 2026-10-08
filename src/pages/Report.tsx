@@ -39,6 +39,7 @@ const categoryOrder = ["Performance", "SEO", "Security", "Accessibility", "Techn
 const scoreWeightLabels: Record<string, string> = { Security: "30%", Performance: "25%", SEO: "25%", "Technical Health": "10%", Accessibility: "10%" };
 
 function formatDate(ts: number) { return new Date(ts).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" }); }
+function formatTime(ts?: number) { return ts ? new Date(ts).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", second: "2-digit" }) : "—"; }
 function scoreToGrade(s: number) { return s >= 90 ? "A" : s >= 80 ? "B" : s >= 65 ? "C" : s >= 50 ? "D" : "F"; }
 function scoreToColor(s: number) { return scoreBarColors[scoreToGrade(s)] || "bg-gray-400"; }
 
@@ -50,6 +51,21 @@ function getScoreHistory(domain: string): ScoreEntry[] {
 }
 function saveScoreToHistory(domain: string, entry: ScoreEntry) {
   try { const raw = localStorage.getItem("sitepulse_history"); const all = raw ? JSON.parse(raw) as Record<string, ScoreEntry[]> : {}; const existing = all[domain] || []; all[domain] = [entry, ...existing.filter((e) => e.scannedAt !== entry.scannedAt)].slice(0, 5); localStorage.setItem("sitepulse_history", JSON.stringify(all)); } catch {}
+}
+
+interface ChecksDoc {
+  score: number; passed: number; failed: number; warnings: number; notChecked: number;
+  applicable?: number; unverified?: number; notApplicable?: number; hasScore?: boolean;
+  formula?: string; factors?: string[];
+}
+
+interface IssueDoc {
+  category: string; severity: Severity; priority: Priority; message: string;
+  whyItMatters: string; howToFix: string;
+  // Evidence trail (older reports lack these)
+  evidence?: string; evidenceUrl?: string; stage?: string;
+  method?: "http" | "tls" | "browser"; checkKey?: string; detectedAt?: number;
+  confirmed?: boolean; status?: "fail" | "warning" | "unable-to-verify";
 }
 
 interface ScanDoc {
@@ -76,24 +92,40 @@ interface ScanDoc {
   sslScore?: number; cookieScore?: number; mixedContentScore?: number;
   performanceScore?: number; seoScore?: number; securityScore?: number;
   accessibilityScore?: number; technicalHealthScore?: number;
-  performanceChecks?: { score: number; passed: number; failed: number; warnings: number; notChecked: number };
-  seoChecks?: { score: number; passed: number; failed: number; warnings: number; notChecked: number };
-  securityChecks?: { score: number; passed: number; failed: number; warnings: number; notChecked: number };
-  accessibilityChecks?: { score: number; passed: number; failed: number; warnings: number; notChecked: number };
-  technicalHealthChecks?: { score: number; passed: number; failed: number; warnings: number; notChecked: number };
-  issues: Array<{ category: string; severity: Severity; priority: Priority; message: string; whyItMatters: string; howToFix: string }>;
-  topIssues?: Array<{ category: string; severity: Severity; priority: Priority; message: string; whyItMatters: string; howToFix: string }>;
+  performanceChecks?: ChecksDoc;
+  seoChecks?: ChecksDoc;
+  securityChecks?: ChecksDoc;
+  accessibilityChecks?: ChecksDoc;
+  technicalHealthChecks?: ChecksDoc;
+  issues: IssueDoc[];
+  topIssues?: IssueDoc[];
   quickWins?: Array<{ category: string; message: string; potentialGain: number; priority: Priority }>;
   totalChecksCompleted?: number; totalPassed?: number; totalFailed?: number; totalWarnings?: number;
+  totalUnverified?: number; totalNotApplicable?: number; overallScored?: boolean;
+  summary?: {
+    completeness: "complete" | "partial" | "blocked";
+    limitations: string[];
+    requestedUrl: string; finalUrl: string; status: number;
+    redirects: number; redirectChain: string[]; contentType?: string;
+    durationMs: number; method: string; browserChecks: string;
+    blocked: boolean; blockReason?: string; notHtml: boolean; incomplete: boolean;
+    counts: { passed: number; failed: number; warnings: number; notApplicable: number; unverified: number; total: number };
+    categoryFormula: string; overallFormula: string; performanceBasis: string;
+    overallScored: boolean;
+  };
   scannedAt: number;
 }
 
 function ScoreBar({ label, score, icon: Icon, color, bg, checks, weight }: {
   label: string; score: number; icon: typeof Shield; color: string; bg: string;
-  checks: { score: number; passed: number; failed: number; warnings: number; notChecked: number };
+  checks: ChecksDoc;
   weight?: string;
 }) {
-  const grade = scoreToGrade(score);
+  // A category with no verified checks has NO score — show "—", never 0/100.
+  const hasScore = checks.hasScore ?? true;
+  const grade = hasScore ? scoreToGrade(score) : "—";
+  const unverified = checks.unverified ?? checks.notChecked ?? 0;
+  const notApplicable = checks.notApplicable ?? 0;
   return (
     <div className="border-2 border-[#1a1a1a] bg-[#FFFBF0] p-4">
       <div className="flex items-center justify-between">
@@ -102,28 +134,52 @@ function ScoreBar({ label, score, icon: Icon, color, bg, checks, weight }: {
           <div>
             <div className="text-sm font-black">{label}</div>
             <div className="text-[11px] text-[#1a1a1a]/45">
-              {checks.passed} passed{checks.failed > 0 ? ` · ${checks.failed} failed` : ""}{checks.warnings > 0 ? ` · ${checks.warnings} warnings` : ""}{checks.notChecked > 0 ? ` · ${checks.notChecked} not checked` : ""}
+              {checks.passed} passed{checks.failed > 0 ? ` · ${checks.failed} failed` : ""}{checks.warnings > 0 ? ` · ${checks.warnings} warnings` : ""}{unverified > 0 ? ` · ${unverified} unable to verify` : ""}{notApplicable > 0 ? ` · ${notApplicable} not applicable` : ""}
               {weight && <span className="ml-1 text-[#1a1a1a]/30">({weight} of total)</span>}
             </div>
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <div className="text-right"><span className="text-2xl font-black">{score}</span><span className="ml-0.5 text-xs font-bold text-[#1a1a1a]/40">/100</span></div>
-          <div className={`flex size-8 items-center justify-center border-2 border-[#1a1a1a] text-xs font-black ${gradeColors[grade]}`}>{grade}</div>
+          <div className="text-right">
+            <span className="text-2xl font-black">{hasScore ? score : "—"}</span>
+            {hasScore && <span className="ml-0.5 text-xs font-bold text-[#1a1a1a]/40">/100</span>}
+          </div>
+          <div className={`flex size-8 items-center justify-center border-2 border-[#1a1a1a] text-xs font-black ${hasScore ? gradeColors[grade] : "bg-gray-200"}`}>{grade}</div>
         </div>
       </div>
-      <div className="mt-3 h-3 w-full overflow-hidden border border-[#1a1a1a]/15 bg-white">
-        <motion.div initial={{ width: 0 }} animate={{ width: `${score}%` }} transition={{ duration: 0.8, ease: "easeOut" }} className={`h-full ${scoreToColor(score)}`} />
-      </div>
+      {!hasScore ? (
+        <p className="mt-3 text-[11px] font-bold text-[#1a1a1a]/50">Not enough verified checks in this category to produce a score — no data, no score.</p>
+      ) : (
+        <div className="mt-3 h-3 w-full overflow-hidden border border-[#1a1a1a]/15 bg-white">
+          <motion.div initial={{ width: 0 }} animate={{ width: `${score}%` }} transition={{ duration: 0.8, ease: "easeOut" }} className={`h-full ${scoreToColor(score)}`} />
+        </div>
+      )}
+      {checks.factors && checks.factors.length > 0 && (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {checks.factors.map((f, i) => (
+            <span key={i} className="border border-[#1a1a1a]/20 bg-white px-1.5 py-0.5 text-[10px] font-bold text-[#1a1a1a]/55">{f}</span>
+          ))}
+        </div>
+      )}
+      {checks.formula && <p className="mt-2 text-[10px] leading-relaxed text-[#1a1a1a]/35">Formula: {checks.formula}</p>}
     </div>
   );
 }
 
-function IssueDetail({ issue, index }: { issue: ScanDoc["issues"][0]; index: number }) {
+const methodLabels: Record<string, string> = { http: "HTTP", tls: "TLS", browser: "Browser" };
+
+function IssueDetail({ issue, index }: { issue: IssueDoc; index: number }) {
   const [expanded, setExpanded] = useState(false);
   const sev = severityConfig[issue.severity];
   const pri = priorityConfig[issue.priority];
   const Icon = sev.icon;
+  const confirmed = issue.confirmed ?? true;
+  const unverifiable = issue.status === "unable-to-verify";
+  const trustBadge = unverifiable
+    ? { label: "Unable to verify", cls: "border-gray-300 bg-gray-100 text-gray-600" }
+    : confirmed
+      ? { label: "Confirmed", cls: "border-emerald-300 bg-emerald-100 text-emerald-700" }
+      : { label: "Potential risk", cls: "border-amber-300 bg-amber-100 text-amber-700" };
   return (
     <div className="border-2 border-[#1a1a1a] bg-[#FFFBF0]">
       <button onClick={() => setExpanded(!expanded)} className="flex w-full items-start gap-3 px-4 py-3 text-left">
@@ -133,7 +189,8 @@ function IssueDetail({ issue, index }: { issue: ScanDoc["issues"][0]; index: num
           <div className="flex flex-wrap items-center gap-1.5">
             <span className={`text-[10px] font-bold uppercase tracking-wider ${sev.color}`}>{sev.label}</span>
             <span className={`border ${pri.border} ${pri.bg} px-1.5 py-0.5 text-[10px] font-bold ${pri.color}`}>{pri.label}</span>
-            <span className="text-[10px] font-bold text-[#1a1a1a]/30">{issue.category}</span>
+            <span className={`border px-1.5 py-0.5 text-[10px] font-bold ${trustBadge.cls}`}>{trustBadge.label}</span>
+            <span className="text-[10px] font-bold text-[#1a1a1a]/30">{issue.category}{issue.checkKey ? ` · ${issue.checkKey}` : ""}</span>
           </div>
           <p className="mt-1 text-sm font-bold text-[#1a1a1a]">{issue.message}</p>
         </div>
@@ -143,14 +200,26 @@ function IssueDetail({ issue, index }: { issue: ScanDoc["issues"][0]; index: num
         {expanded && (
           <motion.div initial={{ height: 0 }} animate={{ height: "auto" }} exit={{ height: 0 }} className="overflow-hidden border-t-2 border-[#1a1a1a]">
             <div className="px-4 py-3 space-y-3">
+              <div className="border-l-3 border-blue-400 bg-blue-50 pl-3 py-2">
+                <div className="text-[10px] font-bold uppercase tracking-wider text-blue-700">Evidence</div>
+                <p className="mt-0.5 text-sm leading-relaxed text-[#1a1a1a]/75">{issue.evidence ?? "Not recorded (saved before evidence tracking was added)."}</p>
+                <div className="mt-1.5 flex flex-wrap gap-1.5 text-[10px] font-bold text-[#1a1a1a]/45">
+                  {issue.method && <span className="border border-blue-200 bg-white px-1.5 py-0.5">Method: {methodLabels[issue.method] ?? issue.method}</span>}
+                  {issue.stage && <span className="border border-blue-200 bg-white px-1.5 py-0.5">Stage: {issue.stage}</span>}
+                  {issue.evidenceUrl && <span className="max-w-[280px] truncate border border-blue-200 bg-white px-1.5 py-0.5" title={issue.evidenceUrl}>{issue.evidenceUrl}</span>}
+                  <span className="border border-blue-200 bg-white px-1.5 py-0.5">Collected: {formatTime(issue.detectedAt)}</span>
+                </div>
+              </div>
               <div className="border-l-3 border-amber-400 bg-amber-50 pl-3 py-2">
                 <div className="text-[10px] font-bold uppercase tracking-wider text-amber-700">Why it matters</div>
                 <p className="mt-0.5 text-sm leading-relaxed text-[#1a1a1a]/70">{issue.whyItMatters}</p>
               </div>
-              <div className="border-l-3 border-emerald-400 bg-emerald-50 pl-3 py-2">
-                <div className="text-[10px] font-bold uppercase tracking-wider text-emerald-700">How to fix</div>
-                <p className="mt-0.5 text-sm leading-relaxed text-[#1a1a1a]/70">{issue.howToFix}</p>
-              </div>
+              {issue.howToFix && (
+                <div className="border-l-3 border-emerald-400 bg-emerald-50 pl-3 py-2">
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-emerald-700">How to fix</div>
+                  <p className="mt-0.5 text-sm leading-relaxed text-[#1a1a1a]/70">{issue.howToFix}</p>
+                </div>
+              )}
             </div>
           </motion.div>
         )}
@@ -190,15 +259,20 @@ export default function Report() {
   if (scan === null) return (<div className="min-h-screen bg-[#FFFBF0] flex items-center justify-center px-4"><div className="text-center"><div className="mb-6 flex size-16 mx-auto items-center justify-center border-2 border-[#1a1a1a] bg-red-100"><XCircle className="size-8 text-red-600" /></div><h1 className="text-2xl font-black">Report Not Found</h1><p className="mt-2 text-sm text-[#1a1a1a]/60 max-w-sm">This scan report does not exist or may have been removed.</p><Link to="/" className="mt-6 inline-flex items-center gap-2 border-2 border-[#1a1a1a] bg-[#FDE68A] px-5 py-2.5 text-sm font-black shadow-[3px_3px_0px_0px_#1a1a1a] transition-all hover:shadow-[1px_1px_0px_0px_#1a1a1a] hover:translate-x-[2px] hover:translate-y-[2px]"><ArrowLeft className="size-4" />Back to SitePulse</Link></div></div>);
 
   const s = scan as ScanDoc;
-  const grade = s.grade || scoreToGrade(s.score);
+  const overallScored = s.overallScored ?? s.summary?.overallScored ?? true;
+  const grade = overallScored ? (s.grade || scoreToGrade(s.score)) : "—";
   const catScores: Record<string, number> = { Performance: s.performanceScore ?? 0, SEO: s.seoScore ?? 0, Security: s.securityScore ?? 0, Accessibility: s.accessibilityScore ?? 0, "Technical Health": s.technicalHealthScore ?? 0 };
-  const catChecks: Record<string, { score: number; passed: number; failed: number; warnings: number; notChecked: number }> = {
+  const catChecks: Record<string, ChecksDoc> = {
     Performance: s.performanceChecks ?? { score: 0, passed: 0, failed: 0, warnings: 0, notChecked: 0 },
     SEO: s.seoChecks ?? { score: 0, passed: 0, failed: 0, warnings: 0, notChecked: 0 },
     Security: s.securityChecks ?? { score: 0, passed: 0, failed: 0, warnings: 0, notChecked: 0 },
     Accessibility: s.accessibilityChecks ?? { score: 0, passed: 0, failed: 0, warnings: 0, notChecked: 0 },
     "Technical Health": s.technicalHealthChecks ?? { score: 0, passed: 0, failed: 0, warnings: 0, notChecked: 0 },
   };
+  const summary = s.summary;
+  // Confirmed findings vs potential risks (older reports have no evidence trail)
+  const confirmedFindings = s.issues.filter((i) => (i.confirmed ?? true) && i.status !== "unable-to-verify").length;
+  const potentialFindings = s.issues.length - confirmedFindings;
   const criticalIssues = s.topIssues?.filter((i) => i.priority === "critical") ?? s.issues.filter((i) => i.priority === "critical").slice(0, 5);
   const quickWins = s.quickWins ?? [];
 
@@ -234,8 +308,8 @@ export default function Report() {
         <div className="mx-auto max-w-5xl px-4 py-8 sm:px-6">
           <div className="flex flex-col items-center gap-6 sm:flex-row sm:items-start">
             <div className="flex flex-col items-center">
-              <div className={`relative flex size-28 items-center justify-center border-[3px] border-[#1a1a1a] ${gradeColors[grade]}`}><span className="text-5xl font-black text-[#1a1a1a]">{s.score}</span></div>
-              <div className="mt-2 border-2 border-[#1a1a1a] bg-[#1a1a1a] px-4 py-1 text-sm font-black text-white">Grade {grade}</div>
+              <div className={`relative flex size-28 items-center justify-center border-[3px] border-[#1a1a1a] ${overallScored ? gradeColors[grade] : "bg-gray-200"}`}><span className="text-5xl font-black text-[#1a1a1a]">{overallScored ? s.score : "—"}</span></div>
+              <div className="mt-2 border-2 border-[#1a1a1a] bg-[#1a1a1a] px-4 py-1 text-sm font-black text-white">{overallScored ? `Grade ${grade}` : "Insufficient data"}</div>
               {prevScore !== null && (
                 <div className="mt-2 flex items-center gap-1.5">
                   {s.score > prevScore + 2 ? <TrendingUp className="size-4 text-emerald-600" /> : s.score < prevScore - 2 ? <TrendingDown className="size-4 text-red-600" /> : <Minus className="size-4 text-[#1a1a1a]/40" />}
@@ -281,7 +355,7 @@ export default function Report() {
             {categoryOrder.map((cat) => (
               <div key={cat} className="border-r-2 border-[#1a1a1a] p-3 text-center last:border-r-0">
                 <div className="text-xs font-bold text-[#1a1a1a]/50">{cat}</div>
-                <div className="mt-1 text-2xl font-black">{catScores[cat] ?? "—"}</div>
+                <div className="mt-1 text-2xl font-black">{(catChecks[cat]?.hasScore ?? true) ? (catScores[cat] ?? "—") : "—"}</div>
                 <div className="text-[10px] font-bold text-[#1a1a1a]/30 mt-0.5">{scoreWeightLabels[cat]}</div>
               </div>
             ))}
@@ -292,15 +366,19 @@ export default function Report() {
       {/* Check Summary */}
       <section className="border-b-2 border-[#1a1a1a] bg-white">
         <div className="mx-auto max-w-5xl px-4 py-6 sm:px-6">
-          <h2 className="mb-4 text-lg font-black">Check Summary</h2>
-          <div className="grid grid-cols-2 gap-0 border-2 border-[#1a1a1a] sm:grid-cols-4">
+          <h2 className="mb-1 text-lg font-black">Check Summary</h2>
+          <p className="mb-4 text-xs text-[#1a1a1a]/50">Every check has exactly one of five states. Only Pass/Fail/Warning are counted as “checked” — Unable to Verify and Not Applicable never count as failures.</p>
+          <div className="grid grid-cols-2 gap-0 border-2 border-[#1a1a1a] sm:grid-cols-3">
             {[
               { label: "Checks Run", value: String(s.totalChecksCompleted ?? 0), icon: BarChart3, color: "text-[#1a1a1a]" },
               { label: "Passed", value: String(s.totalPassed ?? 0), icon: CheckCircle, color: "text-emerald-600" },
               { label: "Failed", value: String(s.totalFailed ?? 0), icon: XCircle, color: "text-red-600", targetId: criticalIssues.length > 0 ? "fix-these-first" : warningIssues.length > 0 || recommendedIssues.length > 0 ? "fix-recommendations" : undefined, targetLabel: "failed issues" },
               { label: "Warnings", value: String(s.totalWarnings ?? 0), icon: AlertTriangle, color: "text-amber-600", targetId: warningIssues.length > 0 || recommendedIssues.length > 0 ? "fix-recommendations" : undefined, targetLabel: "warning issues" },
+              { label: "Unable to Verify", value: String(s.totalUnverified ?? s.summary?.counts.unverified ?? 0), icon: Eye, color: "text-[#1a1a1a]/55" },
+              { label: "Not Applicable", value: String(s.totalNotApplicable ?? s.summary?.counts.notApplicable ?? 0), icon: Minus, color: "text-[#1a1a1a]/40" },
             ].map((stat, i) => {
               const canNavigate = "targetId" in stat && stat.targetId && Number(stat.value) > 0;
+              const border = i % 3 !== 2 ? "sm:border-r-2" : "";
               if (canNavigate) {
                 return (
                   <button
@@ -308,7 +386,7 @@ export default function Report() {
                     type="button"
                     onClick={() => scrollToSection(stat.targetId as string)}
                     aria-label={`${stat.value} ${stat.label.toLowerCase()} — jump to ${stat.targetLabel}`}
-                    className={`group border-b-2 border-[#1a1a1a] p-4 text-left transition-colors cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#1a1a1a] ${i < 3 ? "sm:border-r-2" : ""} hover:bg-[#FFFBF0]`}
+                    className={`group border-b-2 border-[#1a1a1a] p-4 text-left transition-colors cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#1a1a1a] ${border} hover:bg-[#FFFBF0]`}
                   >
                     <div className="flex items-center gap-2"><stat.icon className={`size-4 ${stat.color}`} /><span className="text-xs font-bold text-[#1a1a1a]/50 uppercase tracking-wider">{stat.label}</span><ArrowDown className="ml-auto size-3.5 text-[#1a1a1a]/30 transition-transform group-hover:translate-y-0.5 group-focus-visible:translate-y-0.5" aria-hidden="true" /></div>
                     <div className={`mt-2 text-3xl font-black ${stat.color}`}>{stat.value}</div>
@@ -316,12 +394,88 @@ export default function Report() {
                 );
               }
               return (
-                <div key={stat.label} className={`border-b-2 border-[#1a1a1a] p-4 ${i < 3 ? "sm:border-r-2" : ""}`}>
+                <div key={stat.label} className={`border-b-2 border-[#1a1a1a] p-4 ${border}`}>
                   <div className="flex items-center gap-2"><stat.icon className={`size-4 ${stat.color}`} /><span className="text-xs font-bold text-[#1a1a1a]/50 uppercase tracking-wider">{stat.label}</span></div>
                   <div className={`mt-2 text-3xl font-black ${stat.color}`}>{stat.value}</div>
                 </div>
               );
             })}
+          </div>
+        </div>
+      </section>
+
+      {/* Scan Summary — what was actually observed (and what was not) */}
+      <section id="scan-summary" className="border-b-2 border-[#1a1a1a] bg-white">
+        <div className="mx-auto max-w-5xl px-4 py-6 sm:px-6">
+          <div className="mb-4 flex flex-wrap items-center gap-2">
+            <FileText className="size-5" />
+            <h2 className="text-lg font-black">Scan Summary</h2>
+            <span className={`border-2 border-[#1a1a1a] px-2 py-0.5 text-[10px] font-bold ${
+              summary?.completeness === "blocked" ? "bg-red-100 text-red-700"
+              : summary?.completeness === "partial" ? "bg-amber-100 text-amber-700"
+              : summary?.completeness === "complete" ? "bg-emerald-100 text-emerald-700"
+              : "bg-gray-100 text-gray-600"}`}> 
+              {summary ? (summary.completeness === "complete" ? "Complete scan" : summary.completeness === "blocked" ? "Scan blocked" : "Partial scan") : "Saved before evidence tracking"}
+            </span>
+          </div>
+
+          {summary && summary.limitations.length > 0 && (
+            <div className="mb-4 border-2 border-amber-400 bg-amber-50 p-3">
+              <div className="text-[10px] font-bold uppercase tracking-wider text-amber-700">Scan limitations — read before acting on scores</div>
+              <ul className="mt-1 list-disc space-y-1 pl-4 text-xs leading-relaxed text-[#1a1a1a]/75">
+                {summary.limitations.map((l, i) => <li key={i}>{l}</li>)}
+              </ul>
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <div className="border-2 border-[#1a1a1a] bg-[#FFFBF0] px-3 py-2">
+              <div className="text-[10px] font-bold uppercase tracking-wider text-[#1a1a1a]/45">Requested URL</div>
+              <div className="mt-0.5 break-all text-xs font-bold">{summary?.requestedUrl ?? s.url}</div>
+            </div>
+            <div className="border-2 border-[#1a1a1a] bg-[#FFFBF0] px-3 py-2">
+              <div className="text-[10px] font-bold uppercase tracking-wider text-[#1a1a1a]/45">Final URL (after redirects)</div>
+              <div className="mt-0.5 break-all text-xs font-bold">{summary?.finalUrl ?? s.finalUrl}{(summary?.finalUrl ?? s.finalUrl) !== (summary?.requestedUrl ?? s.url) && <span className="ml-1 border border-amber-300 bg-amber-100 px-1 py-0.5 text-[10px] text-amber-700">redirected</span>}</div>
+            </div>
+            <div className="border-2 border-[#1a1a1a] bg-[#FFFBF0] px-3 py-2">
+              <div className="text-[10px] font-bold uppercase tracking-wider text-[#1a1a1a]/45">HTTP status · redirects</div>
+              <div className="mt-0.5 text-xs font-bold">HTTP {summary?.status ?? s.status} · {summary?.redirects ?? s.redirects} redirect{(summary?.redirects ?? s.redirects) !== 1 ? "s" : ""}</div>
+              {(summary?.redirectChain ?? s.redirectChain ?? []).length > 0 && (
+                <div className="mt-0.5 break-all text-[10px] text-[#1a1a1a]/45">{(summary?.redirectChain ?? s.redirectChain ?? []).join(" → ")} → {summary?.finalUrl ?? s.finalUrl}</div>
+              )}
+            </div>
+            <div className="border-2 border-[#1a1a1a] bg-[#FFFBF0] px-3 py-2">
+              <div className="text-[10px] font-bold uppercase tracking-wider text-[#1a1a1a]/45">Content type · duration</div>
+              <div className="mt-0.5 text-xs font-bold">{summary?.contentType ?? "not recorded"} · {summary?.durationMs ?? s.responseTime} ms</div>
+            </div>
+            <div className="border-2 border-[#1a1a1a] bg-[#FFFBF0] px-3 py-2">
+              <div className="text-[10px] font-bold uppercase tracking-wider text-[#1a1a1a]/45">Detection method</div>
+              <div className="mt-0.5 text-xs font-bold">{summary?.method === "http" ? "HTTP (server-side request)" : summary?.method ?? "HTTP (server-side request)"}</div>
+            </div>
+            <div className="border-2 border-[#1a1a1a] bg-[#FFFBF0] px-3 py-2">
+              <div className="text-[10px] font-bold uppercase tracking-wider text-[#1a1a1a]/45">Findings</div>
+              <div className="mt-1 flex flex-wrap gap-1.5">
+                <span className="border border-emerald-300 bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700">{confirmedFindings} confirmed</span>
+                <span className="border border-amber-300 bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-700">{potentialFindings} potential</span>
+              </div>
+            </div>
+            <div className="border-2 border-[#1a1a1a] bg-[#FFFBF0] px-3 py-2 sm:col-span-2">
+              <div className="text-[10px] font-bold uppercase tracking-wider text-[#1a1a1a]/45">Browser checks</div>
+              <p className="mt-0.5 text-xs leading-relaxed text-[#1a1a1a]/70">{summary?.browserChecks ?? "Not recorded for this legacy report."}</p>
+            </div>
+            <div className="border-2 border-[#1a1a1a] bg-[#FFFBF0] px-3 py-2 sm:col-span-2">
+              <div className="text-[10px] font-bold uppercase tracking-wider text-[#1a1a1a]/45">Performance basis</div>
+              <p className="mt-0.5 text-xs leading-relaxed text-[#1a1a1a]/70">{summary?.performanceBasis ?? "HTTP response timing (server-side request) — not a browser lab test."}</p>
+            </div>
+          </div>
+
+          <div className="mt-3 border-2 border-[#1a1a1a] bg-[#FFFBF0] px-3 py-2">
+            <div className="text-[10px] font-bold uppercase tracking-wider text-[#1a1a1a]/45">How scores are calculated</div>
+            <p className="mt-1 text-xs leading-relaxed text-[#1a1a1a]/70">Category: {summary?.categoryFormula ?? "legacy weighted formula (saved before this upgrade)"}</p>
+            <p className="mt-1 text-xs leading-relaxed text-[#1a1a1a]/70">Overall: {summary?.overallFormula ?? "legacy weighted formula (saved before this upgrade)"}</p>
+            {summary && !summary.overallScored && (
+              <p className="mt-1 text-xs font-bold text-amber-700">No overall score: not enough verified checks to compute one. Incomplete data is never shown as 0/100.</p>
+            )}
           </div>
         </div>
       </section>
@@ -535,19 +689,28 @@ export default function Report() {
         <div className="mx-auto max-w-5xl px-4 py-6 sm:px-6">
           <h2 className="mb-4 text-lg font-black">Security Headers</h2>
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-            {[
+            {([
               { label: "Content-Security-Policy", present: s.hasCSP, hint: "Protects against XSS and injection attacks" },
               { label: "X-Frame-Options", present: s.hasXFrameOptions, hint: "Prevents clickjacking" },
               { label: "X-Content-Type-Options", present: s.hasXContentTypeOptions, hint: "Prevents MIME-type sniffing" },
               { label: "Strict-Transport-Security", present: s.hasStrictTransportSecurity, hint: "Enforces HTTPS connections" },
               { label: "Referrer-Policy", present: s.hasReferrerPolicy, hint: "Controls referrer information sharing" },
               { label: "Permissions-Policy", present: s.hasPermissionsPolicy, hint: "Controls browser feature access" },
-            ].map((header) => (
+            ] as Array<{ label: string; present: boolean; hint: string }>).map((header) => (
               <div key={header.label} className="flex items-center justify-between border-2 border-[#1a1a1a] bg-[#FFFBF0] px-4 py-3">
                 <div><span className="text-sm font-bold">{header.label}</span><p className="mt-0.5 text-[11px] text-[#1a1a1a]/40">{header.hint}</p></div>
-                {header.present ? (<span className="flex shrink-0 items-center gap-1.5 text-xs font-bold text-emerald-600"><CheckCircle className="size-3.5" /> Present</span>) : (<span className="flex shrink-0 items-center gap-1.5 text-xs font-bold text-red-600"><XCircle className="size-3.5" /> Missing</span>)}
+                {summary?.blocked ? (
+                  <span className="flex shrink-0 items-center gap-1.5 text-xs font-bold text-[#1a1a1a]/45"><Minus className="size-3.5" /> Not verified</span>
+                ) : header.present ? (
+                  <span className="flex shrink-0 items-center gap-1.5 text-xs font-bold text-emerald-600"><CheckCircle className="size-3.5" /> Present</span>
+                ) : (
+                  <span className="flex shrink-0 items-center gap-1.5 text-xs font-bold text-red-600"><XCircle className="size-3.5" /> Missing</span>
+                )}
               </div>
             ))}
+            {summary?.blocked && (
+              <p className="text-[11px] font-medium text-amber-700 sm:col-span-2">The scan was blocked by the site, so the application's own headers could not be inspected. Nothing here is reported as a failure.</p>
+            )}
           </div>
         </div>
       </section>
@@ -567,15 +730,15 @@ export default function Report() {
           <div className="border-2 border-[#1a1a1a] bg-[#FFFBF0] p-4 space-y-3">
             <div className="border-l-3 border-blue-400 pl-3">
               <h3 className="text-sm font-black">How This Scan Works</h3>
-              <p className="mt-1 text-xs leading-relaxed text-[#1a1a1a]/65">SitePulse connects to your website from a secure server, fetches the publicly accessible HTML and HTTP headers, then analyzes the response against established web standards. Every check is performed on real data — no simulated or estimated results.</p>
+              <p className="mt-1 text-xs leading-relaxed text-[#1a1a1a]/65">SitePulse connects to your website from a secure server with a controlled HTTP client, records the requested URL, redirect chain, final URL, status, response headers, content type and duration, then analyzes the final response body against established web standards. If the site blocks the scan, returns an error page, or the response is incomplete, affected checks are marked “Unable to Verify” instead of failing. Every finding links back to the exact evidence, method, stage and timestamp shown above. No browser engine is available in this environment, so JavaScript-rendered DOM checks and lab performance metrics are not performed — and are never guessed.</p>
             </div>
             <div className="border-l-3 border-emerald-400 pl-3">
               <h3 className="text-sm font-black">What We Check</h3>
-              <p className="mt-1 text-xs leading-relaxed text-[#1a1a1a]/65">We perform {s.totalChecksCompleted ?? 0} checks across performance (response time, page size), SEO (title, meta description, headings), security (HTTPS, headers, SSL certificate, cookies, mixed content), accessibility (alt text, labels, language), and technical health (HTTP status, redirects, markup). Only checks that could be completed are counted in your score.</p>
+              <p className="mt-1 text-xs leading-relaxed text-[#1a1a1a]/65">We performed {s.totalChecksCompleted ?? 0} checks across performance (response time, page size), SEO (title, meta description, headings), security (HTTPS, headers, SSL certificate, cookies, mixed content), accessibility (alt text, labels, language), and technical health (HTTP status, redirects, markup){(s.totalUnverified ?? 0) > 0 ? `, plus ${s.totalUnverified} checks that could not be verified and ${s.totalNotApplicable ?? 0} that do not apply to this target` : ""}. Only checks evaluated against observed evidence are counted in your score.</p>
             </div>
             <div className="border-l-3 border-amber-400 pl-3">
               <h3 className="text-sm font-black">Scoring Methodology</h3>
-              <p className="mt-1 text-xs leading-relaxed text-[#1a1a1a]/65">Each category is scored independently on a 0–100 scale. Your overall score weights categories by impact: Security (30%), Performance (25%), SEO (25%), Technical Health (10%), and Accessibility (10%). SSL, cookies, and mixed content contribute to the overall score as supplementary signals. Missing checks are excluded from the score calculation — they neither help nor hurt.</p>
+              <p className="mt-1 text-xs leading-relaxed text-[#1a1a1a]/65">{summary?.categoryFormula ?? "Each category is scored from its applicable checks only."} The overall score weights categories by impact and renormalizes over categories that have a score: Security (30%), Performance (25%), SEO (25%), Technical Health (10%), Accessibility (10%). Checks that are Unable to Verify or Not Applicable are excluded entirely — they neither help nor hurt — so incomplete data can never produce a 0/100. Automated checks cannot prove a site is completely secure; they only report the specific configuration evidence observed.</p>
             </div>
             <div className="border-l-3 border-purple-400 pl-3">
               <h3 className="text-sm font-black">Privacy & Safety</h3>
