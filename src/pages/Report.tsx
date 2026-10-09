@@ -827,7 +827,7 @@ export default function Report() {
             </div>
             <div className="border-l-3 border-purple-400 pl-3">
               <h3 className="text-sm font-black">Privacy & Safety</h3>
-              <p className="mt-1 text-xs leading-relaxed text-[#1a1a1a]/65">We never request passwords, API keys, or private credentials. Only publicly accessible pages are analyzed. No cookies are set, no tracking scripts are injected, and no modifications are made to your website. Scans are stored anonymously for 30 days, then deleted automatically, so you can share and revisit reports in the meantime.</p>
+              <p className="mt-1 text-xs leading-relaxed text-[#1a1a1a]/65">We never request passwords, API keys, or private credentials. Only publicly accessible pages are analyzed. No cookies are set, no tracking scripts are injected, and no modifications are made to your website. Saved scans are stored anonymously and deleted automatically once they are more than 30 days old, so you can share and revisit reports in the meantime.</p>
             </div>
           </div>
         </div>

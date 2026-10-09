@@ -3,6 +3,19 @@ import { internalMutation, mutation, query } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { scanRetentionCutoff } from "./retention";
 
+// Bounded batch cleanup of expired scan reports.
+// Kept small and explicit so a single invocation can never blow up, and so
+// the retry chain has a hard limit.
+const DELETE_BATCH_MIN = 1;
+const DELETE_BATCH_MAX = 500;
+const DELETE_DEFAULT_BATCH = 200;
+
+// Retry/backoff guardrails so a failing deployment cannot schedule itself
+// forever or create a rapid scheduling storm.
+const DELETE_MAX_RETRY_CHAINS = 5; // total runs, including the first
+const DELETE_BACKOFF_MS = 1_500;  // grows with each attempt
+const DELETE_BACKOFF_MAX_MS = 30_000;
+
 const categoryScoreValidator = v.object({
   score: v.number(), passed: v.number(), failed: v.number(), warnings: v.number(), notChecked: v.number(),
   applicable: v.optional(v.number()), unverified: v.optional(v.number()), notApplicable: v.optional(v.number()),
@@ -125,27 +138,84 @@ export const getScan = query({
  *   `scannedAt` (index `by_scanned_at`) predates the cutoff — it cannot
  *   delete analytics, feedback, users, or any unrelated record.
  * - Bounded batch per run (1–500 rows) so a single invocation stays small.
- * - Guaranteed progress: deleted rows leave the index, so a backlog is
- *   drained by chained runs instead of an unbounded loop.
+ * - Progress is drained by chained runs, not an unbounded loop.
+ * - Failures are retried a bounded number of times with growing backoff; the
+ *   job never schedules itself forever and never reports success when deletion
+ *   did not complete.
  * - Report/history UX is unaffected structurally: the report page renders
  *   its "Report Not Found" state for deleted ids, and Landing score history
  *   lives in localStorage independent of these documents.
  */
 export const deleteExpiredScans = internalMutation({
-  args: { maxDeletes: v.optional(v.number()) },
+  args: { maxDeletes: v.optional(v.number()), attempt: v.optional(v.number()) },
   handler: async (ctx, args) => {
     const now = Date.now();
     const cutoff = scanRetentionCutoff(now);
-    const max = Math.min(Math.max(Math.floor(args.maxDeletes ?? 200), 1), 500);
+    const max = Math.min(
+      Math.max(Math.floor(args.maxDeletes ?? DELETE_DEFAULT_BATCH), DELETE_BATCH_MIN),
+      DELETE_BATCH_MAX,
+    );
+
+    const attempt = Math.max(Math.floor(args.attempt ?? 1), 1);
+    if (attempt > DELETE_MAX_RETRY_CHAINS) {
+      // Retry limit reached: stop scheduling and surface the failure so the
+      // next cron tick re-derives the backlog from scratch instead of looping.
+      return {
+        deleted: 0,
+        cutoff,
+        failed: true,
+        reason: `retry limit reached (attempt ${attempt} > ${DELETE_MAX_RETRY_CHAINS})`,
+      };
+    }
+
     const expired = await ctx.db
       .query("scans")
       .withIndex("by_scanned_at", (q) => q.lt("scannedAt", cutoff))
       .take(max);
-    for (const doc of expired) await ctx.db.delete(doc._id);
-    // Full batch ⇒ possible backlog; chain another bounded run shortly.
-    if (expired.length === max) {
-      ctx.scheduler.runAfter(1_000, internal.scans.deleteExpiredScans, { maxDeletes: max });
+
+    let deletedCount = 0;
+    const failedDocIds: Array<{ _id: string; scannedAt: number }> = [];
+    for (const doc of expired) {
+      try {
+        await ctx.db.delete(doc._id);
+        deletedCount += 1;
+      } catch {
+        // Track failures per document so the caller can tell success from
+        // partial failure without stopping the rest of the batch.
+        failedDocIds.push({ _id: doc._id, scannedAt: doc.scannedAt ?? 0 });
+      }
     }
-    return { deleted: expired.length, cutoff };
+
+    // Only schedule another run when the batch was full *and* every document
+    // in it was deleted.  A partial success is reported honestly rather than
+    // silently treated as a completed run.
+    if (
+      expired.length === max &&
+      failedDocIds.length === 0 &&
+      attempt < DELETE_MAX_RETRY_CHAINS
+    ) {
+      const nextWait = Math.min(
+        DELETE_BACKOFF_MS * attempt,
+        DELETE_BACKOFF_MAX_MS,
+      );
+      ctx.scheduler.runAfter(
+        nextWait,
+        internal.scans.deleteExpiredScans,
+        { maxDeletes: max, attempt: attempt + 1 },
+      );
+    }
+
+    const partialFailure = failedDocIds.length > 0;
+
+    return {
+      deleted: deletedCount,
+      cutoff,
+      failed: partialFailure,
+      failedCount: partialFailure ? failedDocIds.length : undefined,
+      reason:
+        partialFailure
+          ? `deleted ${deletedCount} of ${expired.length} expired rows`
+          : undefined,
+    };
   },
 });

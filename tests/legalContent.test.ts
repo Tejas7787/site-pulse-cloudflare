@@ -28,7 +28,17 @@ describe("Privacy Policy disclosures", () => {
   test("discloses service providers without claiming data is never shared", () => {
     expect(legal).toContain("Convex (convex.dev)");
     expect(legal).toContain("VLY AI gateway");
-    expect(legal).toContain("gpt-4o-mini");
+    // The policy only names the AI model if it matches the active server config.
+    const ai = read("src/convex/aiAssistant.ts");
+    const configuredModel = ai.match(/model:\s*"([^"]+)"/)?.[1];
+    expect(configuredModel).toBeTruthy();
+    if (configuredModel === "gpt-4o-mini") {
+      expect(legal).toContain(configuredModel);
+    } else {
+      // If the config ever changes, the policy must still mention this model
+      // somewhere so the disclosure is not misleading.
+      expect(legal).toContain(configuredModel);
+    }
     expect(legal).toContain("integrations.vly.ai");
     expect(legal).toContain("web hosting provider");
     // The old blanket claim must not return:

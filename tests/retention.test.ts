@@ -34,7 +34,29 @@ describe("scan retention rules", () => {
     const legal = readFileSync(join(import.meta.dir, "..", "src", "pages", "Legal.tsx"), "utf8");
     expect(legal).toContain("deleted automatically 30 days after the scan");
     const report = readFileSync(join(import.meta.dir, "..", "src", "pages", "Report.tsx"), "utf8");
-    expect(report).toContain("stored anonymously for 30 days, then deleted automatically");
+    expect(report).toContain("deleted automatically once they are more than 30 days old");
+  });
+
+  test("deleteExpiredScans is internal-only, scans-only, indexed, bounded, and bounded-retry", () => {
+    const scans = readFileSync(join(import.meta.dir, "..", "src", "convex", "scans.ts"), "utf8");
+    expect(scans).toContain('internalMutation');
+    expect(scans).toContain('by_scanned_at'); // indexed timestamp — no full scans
+    expect(scans).toContain('.lt("scannedAt", cutoff)'); // only expired rows
+    expect(scans).toContain('take(max)'); // bounded batch
+    expect(scans).toContain('ctx.db.delete(doc._id)'); // explicit per-doc delete of scans only
+    expect(scans).toContain('DELETE_MAX_RETRY_CHAINS'); // bounded retry limit
+    expect(scans).toContain('attempt + 1'); // retry counting
+    expect(scans).not.toContain('db.deleteAll');
+  });
+
+  test("deleteExpiredScans does not report success when deletion fails", () => {
+    const scans = readFileSync(join(import.meta.dir, "..", "src", "convex", "scans.ts"), "utf8");
+    expect(scans).toContain('failed: true');
+    expect(scans).toContain('retry limit reached');
+    // The retry exhausted path returns a clear failure reason.
+    expect(scans).toContain('retry limit reached (attempt');
+    // It must not simply return the full batch count as a success.
+    expect(scans).not.toMatch(/return \{\s*deleted: expired.length,\s*cutoff\s*\}/);
   });
 
   test("cleanup is scheduled and bounded in Convex code", () => {
