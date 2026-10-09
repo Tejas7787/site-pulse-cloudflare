@@ -5,6 +5,15 @@ import { trackEvent } from "../lib/analytics";
 import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import FixRecommendations from "../components/FixRecommendations";
+import {
+  anchorsFor,
+  canonicalActionable,
+  dedupeIssues,
+  issueKey,
+  matchIssueByMessage,
+  splitRecommendations,
+} from "../lib/recommendations";
+import { detectHostingPlatform } from "../lib/hosting";
 import { ScoreTrend } from "../components/ScoreTrend";
 import AIAssistant from "../components/AIAssistant";
 import type { Id } from "../convex/_generated/dataModel";
@@ -309,6 +318,23 @@ export default function Report() {
   const criticalIssues = s.topIssues?.filter((i) => i.priority === "critical") ?? s.issues.filter((i) => i.priority === "critical").slice(0, 5);
   const quickWins = s.quickWins ?? [];
 
+  // One canonical recommendation list per report. Repeated advice is
+  // collapsed, each finding has exactly one detailed card, and every summary
+  // row (Fix These First, Quick Wins) links to that card instead of repeating
+  // the how-to-fix text.
+  const actionableList = canonicalActionable(s.issues);
+  const fixAnchors = anchorsFor(actionableList);
+  const { informational } = splitRecommendations(s.issues);
+  const anchorOf = (issue: (typeof actionableList)[number]) =>
+    fixAnchors.get(issueKey(issue));
+  // Platform-specific fix snippets are only produced when the response named
+  // a platform; otherwise the snippets stay neutral and state the assumption.
+  const hostingPlatform = detectHostingPlatform({
+    server: s.serverInfo?.server,
+    poweredBy: s.serverInfo?.poweredBy,
+    technology: s.serverInfo?.technology ?? [],
+  });
+
   // Issues grouped by severity for the Check Summary jump links
   const warningIssues = s.issues.filter((i) => i.severity === "warning");
   const recommendedIssues = s.issues.filter(
@@ -539,40 +565,69 @@ export default function Report() {
         </div>
       </section>
 
-      {/* Fix These First */}
+      {/* Fix These First — summary rows linking to the single detailed card */}
       {criticalIssues.length > 0 && (
         <section id="fix-these-first" className="border-b-2 border-[#1a1a1a] bg-white">
           <div className="mx-auto max-w-5xl px-4 py-6 sm:px-6">
             <div className="flex items-center gap-2 mb-4"><Target className="size-5 text-red-600" /><h2 className="text-lg font-black">Fix These First</h2><span className="border-2 border-red-300 bg-red-100 px-2 py-0.5 text-[10px] font-bold text-red-600">Priority</span></div>
-            <p className="text-xs text-[#1a1a1a]/50 mb-4">These issues have the highest impact on your health score and should be addressed immediately.</p>
-            <div className="space-y-2">{criticalIssues.map((issue, i) => <IssueDetail key={i} issue={issue} index={i} />)}</div>
+            <p className="text-xs text-[#1a1a1a]/50 mb-4">These issues have the highest impact on your health score. Each one is written out once, in Fix Recommendations — the links jump straight to it.</p>
+            <div className="space-y-2">{criticalIssues.map((issue, i) => {
+              const anchor = anchorOf(issue);
+              return (
+                <div key={issueKey(issue)} className="flex items-center gap-3 border-2 border-[#1a1a1a] bg-[#FFFBF0] px-4 py-3">
+                  <div className="flex size-7 shrink-0 items-center justify-center border border-[#1a1a1a]/20 bg-white text-xs font-black">{i + 1}</div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-bold text-[#1a1a1a]">{issue.message}</p>
+                    <div className="mt-0.5 flex flex-wrap items-center gap-2 text-[10px] font-bold text-[#1a1a1a]/45">
+                      <span>{issue.category}</span>
+                      {issue.evidence && <span className="max-w-[340px] truncate" title={issue.evidence}>Observed: {issue.evidence}</span>}
+                    </div>
+                  </div>
+                  {anchor ? (
+                    <a href={`#${anchor}`} className="shrink-0 border-2 border-[#1a1a1a] bg-red-100 px-2.5 py-1 text-[11px] font-bold text-red-700 transition-colors hover:bg-red-200">See the fix →</a>
+                  ) : (
+                    <span className="shrink-0 text-[11px] font-bold text-[#1a1a1a]/40">See below →</span>
+                  )}
+                </div>
+              );
+            })}</div>
           </div>
         </section>
       )}
 
-      {/* Fix Recommendations — actionable fixes for every failed/warning check */}
-      <FixRecommendations issues={s.issues} />
+      {/* Fix Recommendations — the single detailed list of every actionable fix */}
+      <FixRecommendations issues={s.issues} platform={hostingPlatform} />
 
-      {/* Quick Wins */}
+      {/* Quick Wins — links into the same cards, no repeated advice */}
       {quickWins.length > 0 && (
         <section className="border-b-2 border-[#1a1a1a] bg-white">
           <div className="mx-auto max-w-5xl px-4 py-6 sm:px-6">
             <div className="flex items-center gap-2 mb-4"><Lightbulb className="size-5 text-amber-500" /><h2 className="text-lg font-black">Quick Wins</h2></div>
-            <p className="text-xs text-[#1a1a1a]/50 mb-4">Fix these for the biggest score improvement with the least effort.</p>
+            <p className="text-xs text-[#1a1a1a]/50 mb-4">Fix these for the biggest score improvement with the least effort — each links to its full recommendation below, which is not repeated here.</p>
             <div className="space-y-2">
               {quickWins.map((qw, i) => {
                 const pri = priorityConfig[qw.priority];
-                return (
-                  <div key={i} className="flex items-center gap-3 border-2 border-[#1a1a1a] bg-[#FFFBF0] px-4 py-3">
+                const canonical = matchIssueByMessage(actionableList, qw.message);
+                const anchor = canonical ? anchorOf(canonical) : undefined;
+                const row = (
+                  <>
                     <div className="flex size-7 shrink-0 items-center justify-center border border-[#1a1a1a]/20 bg-white text-xs font-black">{i + 1}</div>
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-bold text-[#1a1a1a]">{qw.message}</p>
-                      <div className="flex items-center gap-2 mt-0.5">
+                      <div className="flex flex-wrap items-center gap-2 mt-0.5">
                         <span className={`border ${pri.border} ${pri.bg} px-1.5 py-0.5 text-[10px] font-bold ${pri.color}`}>{pri.label}</span>
                         <span className="text-[10px] font-bold text-emerald-600">+{qw.potentialGain} pts potential</span>
                       </div>
                     </div>
-                  </div>
+                  </>
+                );
+                return anchor ? (
+                  <a key={`${qw.category}-${qw.message}`} href={`#${anchor}`} className="flex items-center gap-3 border-2 border-[#1a1a1a] bg-[#FFFBF0] px-4 py-3 transition-colors hover:bg-amber-50">
+                    {row}
+                    <span className="shrink-0 text-[11px] font-bold text-[#1a1a1a]/50">Details →</span>
+                  </a>
+                ) : (
+                  <div key={`${qw.category}-${qw.message}`} className="flex items-center gap-3 border-2 border-[#1a1a1a] bg-[#FFFBF0] px-4 py-3">{row}</div>
                 );
               })}
             </div>
@@ -774,11 +829,12 @@ export default function Report() {
         </div>
       </section>
 
-      {/* All Recommendations */}
+      {/* Other Findings — everything not already listed above */}
       <section className="border-b-2 border-[#1a1a1a] bg-white">
         <div className="mx-auto max-w-5xl px-4 py-6 sm:px-6">
-          <div className="flex items-center justify-between"><h2 className="text-lg font-black">All Recommendations</h2><span className="border-2 border-[#1a1a1a] bg-[#FFFBF0] px-3 py-1 text-xs font-bold">{s.issues.length} issue{s.issues.length !== 1 ? "s" : ""} found</span></div>
-          <div className="mt-4 space-y-2">{s.issues.map((issue, i) => <IssueDetail key={i} issue={issue} index={i} />)}</div>
+          <div className="flex items-center justify-between"><h2 className="text-lg font-black">Other Findings</h2><span className="border-2 border-[#1a1a1a] bg-[#FFFBF0] px-3 py-1 text-xs font-bold">{informational.length} of {dedupeIssues(s.issues).length} findings</span></div>
+          <p className="mt-2 text-xs text-[#1a1a1a]/50">Low-priority notes and context. Every actionable fix is listed once in Fix Recommendations above — nothing is repeated here.</p>
+          <div className="mt-4 space-y-2">{informational.length > 0 ? informational.map((issue, i) => <IssueDetail key={issueKey(issue)} issue={issue} index={i} />) : <p className="text-sm font-medium text-[#1a1a1a]/50">Nothing beyond the actionable fixes — this scan only flagged items worth doing.</p>}</div>
         </div>
       </section>
 

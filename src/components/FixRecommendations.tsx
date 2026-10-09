@@ -12,6 +12,16 @@ import {
   Lightbulb,
 } from "lucide-react";
 import type { Priority, Severity } from "../types/scan";
+import {
+  anchorsFor,
+  buildSnippet,
+  canonicalActionable,
+  dedupeIssues,
+  issueKey,
+  type FixSnippet,
+  type RecommendationIssue,
+} from "../lib/recommendations";
+import { HOSTING_LABELS, type HostingPlatform } from "../lib/hosting";
 
 /* ── Priority badge colors ─────────────────────────────────────────── */
 
@@ -53,132 +63,6 @@ const severityUI: Record<
   warning: { icon: AlertTriangle, color: "text-amber-600", bg: "bg-amber-100" },
   info: { icon: Info, color: "text-blue-600", bg: "bg-blue-100" },
 };
-
-/* ── Copy-paste snippet map ─────────────────────────────────────────── */
-
-type Issue = {
-  category: string;
-  severity: Severity;
-  priority: Priority;
-  message: string;
-  whyItMatters: string;
-  howToFix: string;
-};
-
-const SNIPPET_MAP: Record<
-  string,
-  { label: string; code: string; language?: string } | undefined
-> = {
-  // ── Security headers ──
-  "Missing Content-Security-Policy header": {
-    label: "Nginx config",
-    code: `# Add to your Nginx server block or location:\nadd_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data: https:; connect-src 'self'; frame-ancestors 'none';" always;`,
-  },
-  "Missing Strict-Transport-Security (HSTS) header": {
-    label: "Nginx config",
-    code: `# Add to your Nginx server block:\nadd_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;`,
-  },
-  "Missing X-Frame-Options header": {
-    label: "Nginx config",
-    code: `# Add to your Nginx server block:\nadd_header X-Frame-Options "DENY" always;`,
-  },
-  "Missing X-Content-Type-Options header": {
-    label: "Nginx config",
-    code: `# Add to your Nginx server block:\nadd_header X-Content-Type-Options "nosniff" always;`,
-  },
-  "Missing Referrer-Policy header": {
-    label: "Nginx config",
-    code: `# Add to your Nginx server block:\nadd_header Referrer-Policy "strict-origin-when-cross-origin" always;`,
-  },
-  "Missing Permissions-Policy header": {
-    label: "Nginx config",
-    code: `# Add to your Nginx server block:\nadd_header Permissions-Policy "camera=(), microphone=(), geolocation=()" always;`,
-  },
-  "Missing X-Permitted-Cross-Domain-Policies header": {
-    label: "Nginx config",
-    code: `# Add to your Nginx server block:\nadd_header X-Permitted-Cross-Domain-Policies "none" always;`,
-  },
-
-  // ── Apache variants ──
-  "Missing Content-Security-Policy header.": {
-    label: "Apache .htaccess",
-    code: `# Add to your .htaccess or Apache config:\nHeader always set Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data: https:; connect-src 'self'; frame-ancestors 'none';"`,
-  },
-
-  // ── SEO ──
-  "No title tag found.": {
-    label: "HTML",
-    code: `<!-- Add inside <head> -->\n<title>Your Page Title Here — 30-60 characters</title>`,
-  },
-  "No meta description found.": {
-    label: "HTML",
-    code: `<!-- Add inside <head> -->\n<meta name="description" content="A compelling 120-160 character description of this page that entices users to click from search results.">`,
-  },
-  "No H1 tag found.": {
-    label: "HTML",
-    code: `<!-- Add exactly one <h1> per page, inside <body> -->\n<h1>Your Main Page Heading</h1>`,
-  },
-  "No canonical tag found.": {
-    label: "HTML",
-    code: `<!-- Add inside <head> -->\n<link rel="canonical" href="https://yourdomain.com/this-page">`,
-  },
-  "No robots.txt file found.": {
-    label: "robots.txt",
-    code: `# Create at your site root: https://yourdomain.com/robots.txt\nUser-agent: *\nAllow: /\nSitemap: https://yourdomain.com/sitemap.xml`,
-  },
-  "No sitemap.xml found.": {
-    label: "sitemap.xml",
-    code: `<!-- Create at your site root: https://yourdomain.com/sitemap.xml -->\n<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n  <url>\n    <loc>https://yourdomain.com/</loc>\n    <changefreq>weekly</changefreq>\n    <priority>1.0</priority>\n  </url>\n</urlset>`,
-  },
-
-  // ── Technical ──
-  "No viewport meta tag.": {
-    label: "HTML",
-    code: `<!-- Add inside <head> -->\n<meta name="viewport" content="width=device-width, initial-scale=1.0">`,
-  },
-  "Missing charset declaration.": {
-    label: "HTML",
-    code: `<!-- Add as the first tag inside <head> -->\n<meta charset="utf-8">`,
-  },
-  "Missing DOCTYPE declaration.": {
-    label: "HTML",
-    code: `<!-- Add as the very first line of your HTML file -->\n<!DOCTYPE html>`,
-  },
-
-  // ── Accessibility ──
-  "The <html> tag is missing a lang attribute.": {
-    label: "HTML",
-    code: `<!-- Change your <html> tag -->\n<html lang="en">`,
-  },
-  "form input(s) may be missing associated labels.": {
-    label: "HTML",
-    code: `<!-- Pair each input with a label -->\n<label for="email">Email address</label>\n<input id="email" type="email" name="email">`,
-  },
-};
-
-/* ── Determine snippet from issue ──────────────────────────────────── */
-
-function findSnippet(issue: Issue): { label: string; code: string } | null {
-  // Exact match first
-  const exact = SNIPPET_MAP[issue.message];
-  if (exact) return exact;
-
-  // Fuzzy match on header missing messages
-  for (const [key, val] of Object.entries(SNIPPET_MAP)) {
-    if (val && (issue.message.includes(key) || issue.howToFix.includes(key))) return val;
-  }
-
-  // Security header presence check — build from the howToFix text
-  if (
-    issue.category === "Security" &&
-    issue.message.toLowerCase().includes("missing") &&
-    issue.message.toLowerCase().includes("header")
-  ) {
-    return { label: "Header fix", code: `# Add this header to your server configuration:\n# ${issue.howToFix}` };
-  }
-
-  return null;
-}
 
 /* ── Copy button ────────────────────────────────────────────────────── */
 
@@ -233,18 +117,34 @@ function CopyButton({ text }: { text: string }) {
 function RecommendationCard({
   issue,
   index,
+  anchor,
+  platform,
 }: {
-  issue: Issue;
+  issue: RecommendationIssue;
   index: number;
+  anchor: string;
+  platform: HostingPlatform;
 }) {
   const [expanded, setExpanded] = useState(false);
   const pri = priorityUI[issue.priority];
   const sev = severityUI[issue.severity];
   const SevIcon = sev.icon;
-  const snippet = findSnippet(issue);
+  const snippet: FixSnippet | null = buildSnippet(issue, platform);
+
+  // Trust labels separate what was observed from what is only recommended.
+  const trustLabel = issue.status === "unable-to-verify"
+    ? "Unable to verify"
+    : (issue.confirmed ?? true)
+      ? "Confirmed"
+      : "Potential risk";
+  const trustCls = issue.status === "unable-to-verify"
+    ? "border-gray-300 bg-gray-100 text-gray-600"
+    : (issue.confirmed ?? true)
+      ? "border-emerald-300 bg-emerald-100 text-emerald-700"
+      : "border-amber-300 bg-amber-100 text-amber-700";
 
   return (
-    <div className="border-2 border-[#1a1a1a] bg-[#FFFBF0]">
+    <div id={anchor} className="border-2 border-[#1a1a1a] bg-[#FFFBF0] scroll-mt-4">
       <button
         onClick={() => setExpanded(!expanded)}
         className="flex w-full items-start gap-3 px-4 py-3 text-left"
@@ -266,6 +166,9 @@ function RecommendationCard({
               className={`border ${pri.border} ${pri.bg} px-1.5 py-0.5 text-[10px] font-bold ${pri.color}`}
             >
               {pri.label}
+            </span>
+            <span className={`border px-1.5 py-0.5 text-[10px] font-bold ${trustCls}`}>
+              {trustLabel}
             </span>
             <span className="text-[10px] font-bold text-[#1a1a1a]/30">
               {issue.category}
@@ -289,17 +192,19 @@ function RecommendationCard({
             className="overflow-hidden border-t-2 border-[#1a1a1a]"
           >
             <div className="px-4 py-3 space-y-3">
-              {/* 1. What's wrong */}
-              <div className="border-l-3 border-red-400 bg-red-50 pl-3 py-2">
-                <div className="text-[10px] font-bold uppercase tracking-wider text-red-700">
-                  What's wrong
+              {/* Observed evidence */}
+              {issue.evidence && (
+                <div className="border-l-3 border-blue-400 bg-blue-50 pl-3 py-2">
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-blue-700">
+                    What was observed
+                  </div>
+                  <p className="mt-0.5 text-sm leading-relaxed text-[#1a1a1a]/70">
+                    {issue.evidence}
+                  </p>
                 </div>
-                <p className="mt-0.5 text-sm leading-relaxed text-[#1a1a1a]/70">
-                  {issue.message}
-                </p>
-              </div>
+              )}
 
-              {/* 2. Why it matters */}
+              {/* Why it matters */}
               <div className="border-l-3 border-amber-400 bg-amber-50 pl-3 py-2">
                 <div className="text-[10px] font-bold uppercase tracking-wider text-amber-700">
                   Why it matters
@@ -309,17 +214,17 @@ function RecommendationCard({
                 </p>
               </div>
 
-              {/* 3. How to fix */}
+              {/* How to fix */}
               <div className="border-l-3 border-emerald-400 bg-emerald-50 pl-3 py-2">
                 <div className="text-[10px] font-bold uppercase tracking-wider text-emerald-700">
-                  How to fix
+                  Recommendation
                 </div>
                 <p className="mt-0.5 text-sm leading-relaxed text-[#1a1a1a]/70">
                   {issue.howToFix}
                 </p>
               </div>
 
-              {/* 4. Copy-paste fix */}
+              {/* Copy-paste fix, written for the platform the scan observed */}
               {snippet && (
                 <div className="border-l-3 border-blue-400 bg-blue-50 pl-3 py-2">
                   <div className="flex items-center justify-between">
@@ -331,20 +236,23 @@ function RecommendationCard({
                   <pre className="mt-2 overflow-x-auto rounded border border-[#1a1a1a]/10 bg-white p-3 text-xs leading-relaxed text-[#1a1a1a]/80">
                     <code>{snippet.code}</code>
                   </pre>
+                  {snippet.assumption && (
+                    <p className="mt-2 text-[11px] leading-relaxed text-[#1a1a1a]/55">
+                      {snippet.assumption}
+                    </p>
+                  )}
                 </div>
               )}
 
-              {/* 5. Verify fix */}
+              {/* Verify fix */}
               <div className="border-l-3 border-purple-400 bg-purple-50 pl-3 py-2">
                 <div className="text-[10px] font-bold uppercase tracking-wider text-purple-700">
                   Verify the fix
                 </div>
                 <p className="mt-0.5 text-sm leading-relaxed text-[#1a1a1a]/70">
                   After applying the fix, run a new scan with SitePulse to
-                  confirm the issue is resolved. The check should move from{" "}
-                  <span className="font-bold text-red-600">failed</span> to{" "}
-                  <span className="font-bold text-emerald-600">passed</span>,
-                  and your {issue.category.toLowerCase()} score should improve.
+                  confirm the check moves to <span className="font-bold text-emerald-600">passed</span>{" "}
+                  and your {issue.category.toLowerCase()} score improves.
                 </p>
               </div>
             </div>
@@ -359,37 +267,26 @@ function RecommendationCard({
 
 export default function FixRecommendations({
   issues,
+  platform = "unknown",
 }: {
-  issues: Issue[];
+  issues: RecommendationIssue[];
+  platform?: HostingPlatform;
 }) {
   const [showAll, setShowAll] = useState(false);
   const [activeFilter, setActiveFilter] = useState<Priority | "all">("all");
 
-  // Only show issues that are actual problems (critical / important / recommended)
-  const actionable = issues.filter(
-    (i) =>
-      i.priority === "critical" ||
-      i.priority === "important" ||
-      i.priority === "recommended",
-  );
+  // Repeated advice is collapsed here too, so a duplicate can never sneak in
+  // even if a caller passes the raw issue list. Anchors come from the same
+  // canonical list the report's summary rows link into.
+  const actionable = canonicalActionable(issues);
+  const anchors = anchorsFor(actionable);
 
   if (actionable.length === 0) return null;
 
-  // Sort by priority order
-  const priorityOrder: Record<Priority, number> = {
-    critical: 0,
-    important: 1,
-    recommended: 2,
-    "nice-to-have": 3,
-  };
-  const sorted = [...actionable].sort(
-    (a, b) => priorityOrder[a.priority] - priorityOrder[b.priority],
-  );
-
   const filtered =
     activeFilter === "all"
-      ? sorted
-      : sorted.filter((i) => i.priority === activeFilter);
+      ? actionable
+      : actionable.filter((i) => i.priority === activeFilter);
 
   const displayed = showAll ? filtered : filtered.slice(0, 8);
 
@@ -413,6 +310,10 @@ export default function FixRecommendations({
       : []),
   ];
 
+  const lowPriorityCount = dedupeIssues(issues).filter(
+    (i) => i.priority === "nice-to-have",
+  ).length;
+
   return (
     <section id="fix-recommendations" className="border-b-2 border-[#1a1a1a] bg-white">
       <div className="mx-auto max-w-5xl px-4 py-6 sm:px-6">
@@ -421,10 +322,16 @@ export default function FixRecommendations({
           <Wrench className="size-5 text-blue-600" />
           <h2 className="text-lg font-black">Fix Recommendations</h2>
         </div>
-        <p className="text-xs text-[#1a1a1a]/50 mb-4">
-          Actionable fixes for every failed or warning check. Expand any issue
-          to see what's wrong, why it matters, how to fix it, and a copy-paste
-          code snippet where applicable.
+        <p className="text-xs text-[#1a1a1a]/50 mb-2">
+          Every fix appears once, here. Expand an issue to see what was
+          observed, why it matters, the recommendation, and a copy-paste
+          snippet written for {HOSTING_LABELS[platform]}
+          {platform === "unknown" ? " — with the assumption stated openly." : "."}
+        </p>
+        <p className="text-[11px] font-medium text-[#1a1a1a]/45 mb-4">
+          Confirmed findings are backed by observed evidence; “Potential risk”
+          entries are hardening recommendations where the evidence shows a
+          missing control, not an exploit.
         </p>
 
         {/* Filter pills */}
@@ -451,7 +358,13 @@ export default function FixRecommendations({
         {/* Recommendations list */}
         <div className="space-y-2">
           {displayed.map((issue, i) => (
-            <RecommendationCard key={i} issue={issue} index={i} />
+            <RecommendationCard
+              key={anchors.get(issueKey(issue)) ?? String(i)}
+              issue={issue}
+              index={i}
+              anchor={anchors.get(issueKey(issue)) ?? `fix-${i + 1}`}
+              platform={platform}
+            />
           ))}
         </div>
 
@@ -475,14 +388,13 @@ export default function FixRecommendations({
         )}
 
         {/* Low priority hint */}
-        {issues.filter((i) => i.priority === "nice-to-have").length > 0 && (
+        {lowPriorityCount > 0 && (
           <div className="mt-4 border-2 border-dashed border-[#1a1a1a]/15 bg-[#FFFBF0] px-4 py-3">
             <div className="flex items-center gap-2">
               <Lightbulb className="size-4 text-[#1a1a1a]/30" />
               <span className="text-xs font-bold text-[#1a1a1a]/40">
-                {issues.filter((i) => i.priority === "nice-to-have").length}{" "}
-                additional low-priority recommendations available in the full
-                issue list below.
+                {lowPriorityCount} additional low-priority recommendations are
+                listed under “Other Findings” below.
               </span>
             </div>
           </div>
@@ -491,3 +403,5 @@ export default function FixRecommendations({
     </section>
   );
 }
+
+

@@ -7,6 +7,7 @@ import type { Issue, Priority, Severity, CheckResult, CategoryScore, QuickWin, S
 import { scoreCategory, overallScore, CATEGORY_SCORE_FORMULA } from "../lib/scoring";
 import { fetchTarget, detectBlock, isHtmlResponse } from "../lib/fetchTarget";
 import { makeFinding, type FindingInput } from "../lib/findings";
+import { detectSitePages } from "../lib/siteIdentity";
 import tls from "node:tls";
 
 // ── Helpers ──────────────────────────────────────────────────────────
@@ -632,22 +633,29 @@ export const scanWebsite = action({
       }
     }
 
-    // Emit issues for missing headers. Evidence is the exact absence on the
-    // final response. A missing header is a configuration weakness — on its
-    // own it is not proof of an exploitable vulnerability.
+    // Emit findings for missing headers. A missing header is an *observed
+    // configuration gap*, never a demonstrated vulnerability: each finding is
+    // reported as a hardening recommendation (confirmed: false,
+    // status: "warning") so the report lists it under "Potential risk"\    // instead of claiming a confirmed XSS / SSL-stripping / clickjacking bug.
+    // The check itself still fails, so the Security score keeps reflecting the
+    // absent control — only the claim changes, not the measurement.
     for (const { key, header } of headerIssues) {
-      const pri: Priority = header.key === "csp" ? "critical"
-        : header.key === "hsts" ? "important"
-        : header.key === "xfo" || header.key === "xcto" ? "recommended"
-        : "nice-to-have";
+      // Severity review: no missing header is critical on its own. CSP and
+      // HSTS matter most, so they stay "important"; the rest are lower.
+      const pri: Priority =
+        header.key === "csp" || header.key === "hsts"
+          ? "important"
+          : header.key === "xfo" || header.key === "xcto"
+            ? "recommended"
+            : "nice-to-have";
 
       const explanations: Record<string, { why: string; fix: string }> = {
         csp: {
-          why: "Without CSP, your site is vulnerable to Cross-Site Scripting (XSS) attacks where malicious scripts can steal user data, deface your site, or redirect users to phishing pages.",
+          why: "A Content-Security-Policy tells the browser which script and resource origins are allowed. It is the main defence in depth against cross-site scripting (XSS): if an injection bug exists anywhere on the site, a CSP stops many payloads from running. This scan observed that the header is absent — it did not find an exploitable XSS vulnerability, and an absent header on its own does not prove one exists.",
           fix: 'Add a Content-Security-Policy header. Start with a basic policy: Content-Security-Policy: default-src \'self\'; script-src \'self\'; style-src \'self\' \'unsafe-inline\'.',
         },
         hsts: {
-          why: "HSTS tells browsers to always use HTTPS for your site. Without it, returning visitors may be vulnerable to SSL stripping attacks on their first visit.",
+          why: "Strict-Transport-Security tells browsers to always use HTTPS for your site, protecting first-time visitors from SSL stripping on an unencrypted connection. This scan observed that the header is absent — it did not test for an active SSL-stripping attack, so no vulnerability is being claimed here.",
           fix: 'Add the header: Strict-Transport-Security: max-age=31536000; includeSubDomains. Start with a short max-age and increase over time.',
         },
         xcto: {
@@ -675,12 +683,14 @@ export const scanWebsite = action({
       const e = explanations[header.key] || { why: "This security header helps protect your site.", fix: `Add the ${header.label} header to your server configuration.` };
       addIssue("Security", severityForPriority(pri), pri,
         `Missing ${header.label} header.`,
-        `${e.why} Note: a missing header is a configuration weakness — on its own it is not proof of an exploitable vulnerability.`,
+        `${e.why} What this does not mean: nothing was exploited — the scan only observed that the header was missing from this response.`,
         e.fix,
         {
           checkKey: key,
           stage: "headers",
-          status: "fail",
+          // Hardening recommendation, not a confirmed vulnerability.
+          status: "warning",
+          confirmed: false,
           evidence: `${header.label} was not present in the response headers of ${finalUrl} (HTTP ${status}).`,
         },
       );
@@ -1171,11 +1181,23 @@ export const scanWebsite = action({
     // SITE IDENTITY
     // ══════════════════════════════════════════════════════════════════
 
-    const hasPrivacyPolicy = /privacy[- _]?policy|datenschutz|privacidad/i.test(html);
-    const hasTermsOfService = /terms[- _]?(?:of[- _]?)?service|terms[- _]?and[- _]?conditions|agb|términos/i.test(html);
-    const hasContactInfo = /contact[\s@]|mailto:|tel:|phone|address|support@/i.test(html);
+    // Multilingual page detection: privacy/terms/about/contact links are
+    // recognised in English, French, German and Spanish — by link label, by
+    // common URL pattern, by declared hreflang alternate and by page title.
+    // The legacy English whole-page heuristics below stay as a fallback, so a
+    // page that used to count as "found" can never start being reported
+    // as missing.
+    const sitePages = detectSitePages(pageContent);
+    const hasPrivacyPolicy =
+      sitePages.found.privacy || /privacy[- _]?policy|datenschutz|privacidad/i.test(html);
+    const hasTermsOfService =
+      sitePages.found.terms ||
+      /terms[- _]?(?:of[- _]?)?service|terms[- _]?and[- _]?conditions|agb|términos/i.test(html);
+    const hasContactInfo =
+      sitePages.found.contact || /contact[\s@]|mailto:|tel:|phone|address|support@/i.test(html);
     const orgFromSsl = sslInfo?.issuer && !sslInfo.issuer.match(/^(Let's Encrypt|DigiCert|Sectigo|Comodo|GeoTrust|GlobalSign|Thawte)$/i) ? sslInfo.issuer : null;
-    const hasOrganization = !!orgFromSsl || /organization|company|about[- _]?us/i.test(html);
+    const hasOrganization =
+      !!orgFromSsl || sitePages.found.about || /organization|company|about[- _]?us/i.test(html);
     const organizationName = orgFromSsl || null;
 
     const siteIdentity: SiteIdentity = { hasPrivacyPolicy, hasTermsOfService, hasContactInfo, hasOrganization, organizationName };
