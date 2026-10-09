@@ -1,9 +1,10 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef } from "react";
 import { useAction, useMutation } from "convex/react";
 import { api } from "../convex/_generated/api";
 import { trackEvent } from "../lib/analytics";
 import FeedbackModal from "../components/FeedbackModal";
 import { addScanToHistory, getScanHistory, clearScanHistory, domainFromUrl, formatScanDate, type ScanHistoryEntry } from "../lib/scanHistory";
+import { ScoreTrend } from "../components/ScoreTrend";
 import { History, Trash2 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useNavigate, Link } from "react-router";
@@ -24,9 +25,6 @@ import {
   Share2,
   ArrowRight,
   ChevronUp,
-  TrendingUp,
-  TrendingDown,
-  Minus,
 } from "lucide-react";
 
 type Severity = "critical" | "warning" | "info";
@@ -147,16 +145,6 @@ const categoryIcons: Record<string, typeof Shield> = {
   Performance: Zap, SEO: Search, Security: Shield, Accessibility: Eye, "Technical Health": Globe,
 };
 
-// Score history (localStorage)
-interface ScoreEntry { score: number; scannedAt: number; url: string; }
-function getDomainFromUrl(url: string): string { try { return new URL(url).hostname; } catch { return url; } }
-function getScoreHistory(domain: string): ScoreEntry[] {
-  try { const raw = localStorage.getItem("sitepulse_history"); if (!raw) return []; const all = JSON.parse(raw) as Record<string, ScoreEntry[]>; return all[domain] || []; } catch { return []; }
-}
-function saveScoreToHistory(domain: string, entry: ScoreEntry) {
-  try { const raw = localStorage.getItem("sitepulse_history"); const all = raw ? JSON.parse(raw) as Record<string, ScoreEntry[]> : {}; const existing = all[domain] || []; all[domain] = [entry, ...existing.filter((e) => e.scannedAt !== entry.scannedAt)].slice(0, 5); localStorage.setItem("sitepulse_history", JSON.stringify(all)); } catch {}
-}
-
 // Recursively convert null values to undefined so they satisfy Convex's
 // v.optional(...) validators, which reject null but accept missing/undefined.
 function nullsToUndefined<T>(value: T): T {
@@ -177,7 +165,6 @@ export default function Landing() {
   const [scanId, setScanId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
-  const [prevScore, setPrevScore] = useState<number | null>(null);
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   const [history, setHistory] = useState<ScanHistoryEntry[]>(() => getScanHistory());
   const scanWebsite = useAction(api.scan.scanWebsite);
@@ -185,21 +172,10 @@ export default function Landing() {
   const navigate = useNavigate();
   const resultsRef = useRef<HTMLDivElement>(null);
 
-  // Save score to history & load previous score
-  useEffect(() => {
-    if (result && result.url) {
-      const domain = getDomainFromUrl(result.url);
-      const history = getScoreHistory(domain);
-      if (history.length > 0) setPrevScore(history[0].score);
-      else setPrevScore(null);
-      saveScoreToHistory(domain, { score: result.score, scannedAt: result.scannedAt, url: result.url });
-    }
-  }, [result]);
-
   const handleScan = async () => {
     if (!url.trim()) return;
     trackEvent("scan_started", { targetUrl: url.trim() });
-    setScanning(true); setError(null); setResult(null); setScanId(null); setPrevScore(null);
+    setScanning(true); setError(null); setResult(null); setScanId(null);
     try {
       const res = await scanWebsite({ url: url.trim() });
       const scanResult = res as ScanResult;
@@ -233,7 +209,7 @@ export default function Landing() {
     finally { setScanning(false); }
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent) => { if (e.key === "Enter" && !scanning) handleScan(); };  const handleShare = async () => { if (!scanId) return; trackEvent("share_report_clicked"); try { await navigator.clipboard.writeText(`${window.location.origin}/report/${scanId}`); setCopied(true); setTimeout(() => setCopied(false), 2000); } catch {} };
+  const handleKeyDown = (e: React.KeyboardEvent) => { if (e.key === "Enter" && !scanning) handleScan(); };  const handleShare = async () => { if (!scanId) return; trackEvent("share_report_clicked"); try { await navigator.clipboard.writeText(`${window.location.origin}/report/${scanId}`); setCopied(true); setTimeout(() => setCopied(false), 2000); } catch { /* clipboard unavailable (permissions / non-secure context) */ } };
   const handleViewFullReport = () => { if (scanId) navigate(`/report/${scanId}`); };
 
   const issuesByCategory: Record<string, ScanResult["issues"]> = (result?.issues ?? []).reduce(
@@ -253,7 +229,7 @@ export default function Landing() {
           </div>
           <div className="flex items-center gap-4">
             {history.length > 0 && (
-              <button onClick={() => { if (result) { setResult(null); setScanId(null); setPrevScore(null); } setTimeout(() => document.getElementById('scan-history')?.scrollIntoView({ behavior: 'smooth' }), 50); }} className="inline-flex items-center gap-1.5 border-2 border-[#1a1a1a] bg-white px-3 py-1.5 text-xs font-bold transition-colors hover:bg-[#E0E7FF]" aria-label="View scan history">
+              <button onClick={() => { if (result) { setResult(null); setScanId(null); } setTimeout(() => document.getElementById('scan-history')?.scrollIntoView({ behavior: 'smooth' }), 50); }} className="inline-flex items-center gap-1.5 border-2 border-[#1a1a1a] bg-white px-3 py-1.5 text-xs font-bold transition-colors hover:bg-[#E0E7FF]" aria-label="View scan history">
                 <History className="size-3.5" aria-hidden="true" />History {history.length > 0 && <span className="ml-0.5 border border-[#1a1a1a]/20 bg-[#FFFBF0] px-1.5 py-0.5 text-[10px] font-black">{history.length}</span>}
               </button>
             )}
@@ -398,14 +374,7 @@ export default function Landing() {
                       <span className={`inline-flex items-center gap-1 border-2 border-[#1a1a1a] px-2 py-0.5 text-[10px] font-bold ${result.riskLevel === "low" ? "bg-emerald-100 text-emerald-700" : result.riskLevel === "medium" ? "bg-yellow-100 text-yellow-700" : result.riskLevel === "high" ? "bg-orange-100 text-orange-700" : "bg-red-100 text-red-700"}`}>{result.riskLevel === "low" ? "Low Risk" : result.riskLevel === "medium" ? "Medium Risk" : result.riskLevel === "high" ? "High Risk" : "Critical Risk"}</span>
                     </div>
                     <p className="mt-1 text-[10px] text-[#1a1a1a]/40">Better than {result.betterThanPercent}% of scanned sites</p>
-                    {prevScore !== null && (
-                      <div className="mt-2 flex items-center gap-1.5">
-                        {result.score > prevScore + 2 ? <TrendingUp className="size-4 text-emerald-600" /> : result.score < prevScore - 2 ? <TrendingDown className="size-4 text-red-600" /> : <Minus className="size-4 text-[#1a1a1a]/40" />}
-                        <span className={`text-xs font-bold ${result.score > prevScore + 2 ? "text-emerald-600" : result.score < prevScore - 2 ? "text-red-600" : "text-[#1a1a1a]/40"}`}>
-                          {result.score > prevScore + 2 ? `+${result.score - prevScore}` : result.score < prevScore - 2 ? `${result.score - prevScore}` : "Same"} vs last scan
-                        </span>
-                      </div>
-                    )}
+                    <ScoreTrend key={result.scannedAt} scan={result} />
                   </div>
                   <div className="flex-1 text-center sm:text-left">
                     <h2 className="text-2xl font-black sm:text-3xl">Your Health Report</h2>
@@ -515,7 +484,7 @@ export default function Landing() {
             <div className="bg-[#FFFBF0]">
               <div className="mx-auto max-w-6xl px-4 py-10 text-center sm:px-6">
                 <p className="mb-4 text-sm font-medium text-[#1a1a1a]/60">Want to check another website?</p>
-                <button onClick={() => { setResult(null); setScanId(null); setUrl(""); setPrevScore(null); window.scrollTo({ top: 0, behavior: "smooth" }); }} className="inline-flex items-center gap-2 border-2 border-[#1a1a1a] bg-[#FDE68A] px-6 py-3 text-sm font-black shadow-[3px_3px_0px_0px_#1a1a1a] transition-all hover:shadow-[1px_1px_0px_0px_#1a1a1a] hover:translate-x-[2px] hover:translate-y-[2px]"><Search className="size-4" />Scan Another Website</button>
+                <button onClick={() => { setResult(null); setScanId(null); setUrl(""); window.scrollTo({ top: 0, behavior: "smooth" }); }} className="inline-flex items-center gap-2 border-2 border-[#1a1a1a] bg-[#FDE68A] px-6 py-3 text-sm font-black shadow-[3px_3px_0px_0px_#1a1a1a] transition-all hover:shadow-[1px_1px_0px_0px_#1a1a1a] hover:translate-x-[2px] hover:translate-y-[2px]"><Search className="size-4" />Scan Another Website</button>
               </div>
             </div>
           </motion.section>

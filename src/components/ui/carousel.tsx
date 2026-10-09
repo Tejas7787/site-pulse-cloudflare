@@ -88,7 +88,10 @@ function Carousel({
 
   React.useEffect(() => {
     if (!api || !setApi) return
-    setApi(api)
+    // Hand the instance back to the parent on the next frame: notifying a
+    // parent from the effect body itself schedules a cascading render.
+    const frame = window.requestAnimationFrame(() => setApi(api))
+    return () => window.cancelAnimationFrame(frame)
   }, [api, setApi])
 
   React.useEffect(() => {

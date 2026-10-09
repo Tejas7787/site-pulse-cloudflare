@@ -4,13 +4,7 @@
 //  * a fix is only offered when the evidence supports one
 //  * every finding records method, stage, URL and timestamp
 
-import type {
-  DetectionMethod,
-  FindingEvidence,
-  Issue,
-  Priority,
-  Severity,
-} from "../types/scan";
+import type { DetectionMethod, Issue, Priority, Severity } from "../types/scan";
 
 export const DEFAULT_STAGE_BY_CATEGORY: Record<string, string> = {
   Performance: "fetch",

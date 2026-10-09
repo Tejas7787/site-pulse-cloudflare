@@ -3,7 +3,7 @@
 import { v } from "convex/values";
 import { action } from "./_generated/server";
 import type { Issue, Priority, Severity, CheckResult, CategoryScore, QuickWin, SSLInfo, CookieInfo, MixedContent, ServerInfo, SiteIdentity, ScanSummary } from "../types/scan";
-import { scoreCategory, overallScore, CATEGORY_SCORE_FORMULA, OVERALL_SCORE_FORMULA } from "../lib/scoring";
+import { scoreCategory, overallScore, CATEGORY_SCORE_FORMULA } from "../lib/scoring";
 import { fetchTarget, detectBlock, isHtmlResponse } from "../lib/fetchTarget";
 import { makeFinding, type FindingInput } from "../lib/findings";
 import tls from "node:tls";
@@ -85,44 +85,8 @@ async function isUrlSafe(urlStr: string): Promise<boolean> {
 
 // ── Priority Assignment ──────────────────────────────────────────────
 
-function assignPriority(
-  category: string,
-  checkKey: string,
-  result: CheckResult,
-): Priority {
-  if (result === "pass" || result === "not-checked") return "nice-to-have";
-
-  // Critical: do today
-  if (
-    checkKey === "https" ||
-    (checkKey === "header-csp" && result === "fail") ||
-    (checkKey === "http-status" && result === "fail") ||
-    (checkKey === "response-time" && result === "fail")
-  ) return "critical";
-
-  // Important: do this week
-  if (
-    checkKey === "meta-description" ||
-    checkKey === "h1-tag" ||
-    checkKey === "header-hsts" ||
-    checkKey === "page-size" && result === "fail" ||
-    checkKey === "viewport"
-  ) return "important";
-
-  // Recommended: do this month
-  if (
-    checkKey === "header-xfo" ||
-    checkKey === "header-xcto" ||
-    checkKey === "canonical-tag" ||
-    checkKey === "heading-structure" ||
-    checkKey === "title" ||
-    checkKey === "redirects" && result === "fail"
-  ) return "recommended";
-
-  // Nice to have
-  return "nice-to-have";
-}
-
+// Priorities are assigned where each finding is created (the call site knows
+// the evidence); severityForPriority maps a priority onto a severity.
 function severityForPriority(p: Priority): Severity {
   if (p === "critical") return "critical";
   if (p === "important") return "warning";
@@ -631,9 +595,6 @@ export const scanWebsite = action({
       { name: "X-Permitted-Cross-Domain-Policies", key: "xpcdp", label: "X-Permitted-Cross-Domain-Policies", points: 10 },
     ];
 
-    let securityPoints = isHttps ? 20 : 0; // informational only (kept for sub-score display)
-    const maxSecurityPoints = 20 + 20 + 15 + 15 + 15 + 15 + 10 + 10; // reference value
-
     // Helper: check if a security header is declared via <meta http-equiv> in the HTML.
     // Per the HTML spec, ONLY Content-Security-Policy is valid via <meta http-equiv>.
     // All other security headers MUST be delivered as HTTP response headers.
@@ -652,9 +613,7 @@ export const scanWebsite = action({
       const isMetaFallback = sh.key === "csp" && hasMetaEquivCSP();
       const present = isHttpHeaderPresent || isMetaFallback;
       securityChecks[`header-${sh.key}`] = present ? "pass" : "fail";
-      if (present) {
-        securityPoints += sh.points;
-      } else {
+      if (!present) {
         headerIssues.push({ key: `header-${sh.key}`, header: sh });
       }
     }
@@ -1084,9 +1043,8 @@ export const scanWebsite = action({
 
     if (isHttps && hasHtml && contentUsable) {
       // Find HTTP resources in src/href attributes of the FINAL HTML document
-      const httpResourceRegex = /(src|href)=(['"])(http:\/\/[^'\"]+)\2/gi;
-      let match;
-      let lineNum = 1;
+      // Dead code, disabled: unused whole-document regex superseded by the per-line scan below.
+      // /(src|href)=(['"])(http:\/\/[^'\"]+)\2/gi;
       const lines = pageContent.split("\n");
 
       for (let li = 0; li < lines.length; li++) {

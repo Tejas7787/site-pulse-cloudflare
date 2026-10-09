@@ -3,8 +3,8 @@ import { useQuery } from "convex/react";
 import { api } from "../convex/_generated/api";
 import { Link } from "react-router";
 import {
-  Activity, BarChart3, CheckCircle2, Eye, Globe, Lock, Monitor,
-  MousePointerClick, ScanSearch, Smartphone, Star, Tablet, TrendingUp, Users, XCircle,
+  Activity, BarChart3, CheckCircle2, Eye, Globe, Lock,
+  MousePointerClick, ScanSearch, Smartphone, Star, TrendingUp, Users, XCircle,
   MessageSquare,
 } from "lucide-react";
 

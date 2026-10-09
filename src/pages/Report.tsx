@@ -2,17 +2,18 @@ import { useParams, Link } from "react-router";
 import { useQuery } from "convex/react";
 import { api } from "../convex/_generated/api";
 import { trackEvent } from "../lib/analytics";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import FixRecommendations from "../components/FixRecommendations";
+import { ScoreTrend } from "../components/ScoreTrend";
 import AIAssistant from "../components/AIAssistant";
 import type { Id } from "../convex/_generated/dataModel";
 import type { Priority, Severity } from "../types/scan";
 import {
-  ArrowDown, ArrowLeft, CheckCircle, AlertTriangle, XCircle, Info, ChevronDown, ChevronUp,
+  ArrowDown, ArrowLeft, CheckCircle, AlertTriangle, XCircle, Info, ChevronDown,
   ExternalLink, Activity, Share2, Loader2, Globe, Shield, Search, Zap, Eye,
-  BarChart3, TrendingUp, TrendingDown, Minus, Target, Lightbulb, Lock, Cookie,
-  Image, Server, FileText, BadgeCheck, AlertOctagon, ShieldAlert, BookOpen,
+  BarChart3, Minus, Target, Lightbulb, Lock, Cookie,
+  Image, Server, FileText, BadgeCheck, ShieldAlert, BookOpen,
   FileDown, Printer,
 } from "lucide-react";
 
@@ -43,16 +44,6 @@ function formatDate(ts: number) { return new Date(ts).toLocaleDateString("en-US"
 function formatTime(ts?: number) { return ts ? new Date(ts).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", second: "2-digit" }) : "—"; }
 function scoreToGrade(s: number) { return s >= 90 ? "A" : s >= 80 ? "B" : s >= 65 ? "C" : s >= 50 ? "D" : "F"; }
 function scoreToColor(s: number) { return scoreBarColors[scoreToGrade(s)] || "bg-gray-400"; }
-
-// Score history (localStorage)
-interface ScoreEntry { score: number; scannedAt: number; url: string; }
-function getDomainFromUrl(url: string): string { try { return new URL(url).hostname; } catch { return url; } }
-function getScoreHistory(domain: string): ScoreEntry[] {
-  try { const raw = localStorage.getItem("sitepulse_history"); if (!raw) return []; const all = JSON.parse(raw) as Record<string, ScoreEntry[]>; return all[domain] || []; } catch { return []; }
-}
-function saveScoreToHistory(domain: string, entry: ScoreEntry) {
-  try { const raw = localStorage.getItem("sitepulse_history"); const all = raw ? JSON.parse(raw) as Record<string, ScoreEntry[]> : {}; const existing = all[domain] || []; all[domain] = [entry, ...existing.filter((e) => e.scannedAt !== entry.scannedAt)].slice(0, 5); localStorage.setItem("sitepulse_history", JSON.stringify(all)); } catch {}
-}
 
 interface ChecksDoc {
   score: number; passed: number; failed: number; warnings: number; notChecked: number;
@@ -232,31 +223,22 @@ function IssueDetail({ issue, index }: { issue: IssueDoc; index: number }) {
 export default function Report() {
   const { id } = useParams<{ id: string }>();
   const [copied, setCopied] = useState(false);
-  const [prevScore, setPrevScore] = useState<number | null>(null);
   const [pdfState, setPdfState] = useState<"idle" | "working" | "error">("idle");
   const [pdfError, setPdfError] = useState<string | null>(null);
   const scan = useQuery(api.scans.getScan, id ? { id: id as Id<"scans"> } : "skip");
 
-  // Analytics: report viewed (once per mounted report id)
-  const [viewTracked, setViewTracked] = useState(false);
+  // Analytics: report viewed (once per mounted report id). A ref keeps the
+  // "already tracked" memory outside React state, so the effect never has to
+  // schedule a render of its own.
+  const trackedReportId = useRef<string | null>(null);
   useEffect(() => {
-    if (id && !viewTracked) {
-      setViewTracked(true);
+    if (id && trackedReportId.current !== id) {
+      trackedReportId.current = id;
       trackEvent("report_viewed", { path: `/report/${id}` });
     }
-  }, [id, viewTracked]);
+  }, [id]);
 
-  useEffect(() => {
-    if (scan && scan.url) {
-      const domain = getDomainFromUrl(scan.url);
-      const history = getScoreHistory(domain);
-      if (history.length > 0) setPrevScore(history[0].score);
-      else setPrevScore(null);
-      saveScoreToHistory(domain, { score: scan.score, scannedAt: scan.scannedAt, url: scan.url });
-    }
-  }, [scan]);
-
-  const handleShare = async () => { trackEvent("share_report_clicked", { path: window.location.pathname }); try { await navigator.clipboard.writeText(window.location.href); setCopied(true); setTimeout(() => setCopied(false), 2000); } catch {} };
+  const handleShare = async () => { trackEvent("share_report_clicked", { path: window.location.pathname }); try { await navigator.clipboard.writeText(window.location.href); setCopied(true); setTimeout(() => setCopied(false), 2000); } catch { /* clipboard unavailable (permissions / non-secure context) */ } };
 
   // ── PDF export ────────────────────────────────────────────────────────────
   // Generated entirely in the browser from the SAME saved document this page
@@ -328,7 +310,6 @@ export default function Report() {
   const quickWins = s.quickWins ?? [];
 
   // Issues grouped by severity for the Check Summary jump links
-  const failedIssues = s.issues.filter((i) => i.severity === "critical");
   const warningIssues = s.issues.filter((i) => i.severity === "warning");
   const recommendedIssues = s.issues.filter(
     (i) => i.priority === "recommended" && i.severity !== "critical" && i.severity !== "warning",
@@ -395,14 +376,7 @@ export default function Report() {
             <div className="flex flex-col items-center">
               <div className={`relative flex size-28 items-center justify-center border-[3px] border-[#1a1a1a] ${overallScored ? gradeColors[grade] : "bg-gray-200"}`}><span className="text-5xl font-black text-[#1a1a1a]">{overallScored ? s.score : "—"}</span></div>
               <div className="mt-2 border-2 border-[#1a1a1a] bg-[#1a1a1a] px-4 py-1 text-sm font-black text-white">{overallScored ? `Grade ${grade}` : "Insufficient data"}</div>
-              {prevScore !== null && (
-                <div className="mt-2 flex items-center gap-1.5">
-                  {s.score > prevScore + 2 ? <TrendingUp className="size-4 text-emerald-600" /> : s.score < prevScore - 2 ? <TrendingDown className="size-4 text-red-600" /> : <Minus className="size-4 text-[#1a1a1a]/40" />}
-                  <span className={`text-xs font-bold ${s.score > prevScore + 2 ? "text-emerald-600" : s.score < prevScore - 2 ? "text-red-600" : "text-[#1a1a1a]/40"}`}>
-                    {s.score > prevScore + 2 ? `+${s.score - prevScore}` : s.score < prevScore - 2 ? `${s.score - prevScore}` : "Same"} vs last scan
-                  </span>
-                </div>
-              )}
+              <ScoreTrend key={s.scannedAt} scan={s} />
             </div>
             <div className="flex-1 text-center sm:text-left">
               <h1 className="text-2xl font-black sm:text-3xl">Website Health Report</h1>

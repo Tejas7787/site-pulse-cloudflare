@@ -9,7 +9,6 @@ import {
   AlertTriangle,
   XCircle,
   Info,
-  ExternalLink,
   Lightbulb,
 } from "lucide-react";
 import type { Priority, Severity } from "../types/scan";

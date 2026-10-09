@@ -599,6 +599,14 @@ function SidebarMenuBadge({
   )
 }
 
+// Skeletons only need a *varied* width, so derive one deterministically from
+// the instance id instead of Math.random(), which is impure during render.
+function skeletonWidth(id: string) {
+  let hash = 0
+  for (let i = 0; i < id.length; i++) hash = (hash * 31 + id.charCodeAt(i)) | 0
+  return `${(Math.abs(hash) % 40) + 50}%`
+}
+
 function SidebarMenuSkeleton({
   className,
   showIcon = false,
@@ -606,10 +614,7 @@ function SidebarMenuSkeleton({
 }: React.ComponentProps<"div"> & {
   showIcon?: boolean
 }) {
-  // Random width between 50 to 90%.
-  const width = React.useMemo(() => {
-    return `${Math.floor(Math.random() * 40) + 50}%`
-  }, [])
+  const width = skeletonWidth(React.useId())
 
   return (
     <div
