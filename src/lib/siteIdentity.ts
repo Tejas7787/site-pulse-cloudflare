@@ -105,40 +105,53 @@ const LABELS: Record<PageKind, { text: string; language: PageEvidence["language"
 };
 
 /** Common URL path segments (after locale prefix / extension stripping). */
-const PATH_PATTERNS: Record<PageKind, string[]> = {
+const PATH_PATTERNS: Record<PageKind, { segment: string; language: PageEvidence["language"] }[]> = {
   privacy: [
-    "privacy",
-    "privacy-policy",
-    "privacypolicy",
-    "datenschutz",
-    "datenschutzerklaerung",
-    "confidentialite",
-    "politique-de-confidentialite",
-    "privacidad",
-    "politica-de-privacidad",
-    "aviso-de-privacidad",
+    { segment: "privacy", language: "en" },
+    { segment: "privacy-policy", language: "en" },
+    { segment: "privacypolicy", language: "en" },
+    { segment: "datenschutz", language: "de" },
+    { segment: "datenschutzerklaerung", language: "de" },
+    { segment: "confidentialite", language: "fr" },
+    { segment: "politique-de-confidentialite", language: "fr" },
+    { segment: "privacidad", language: "es" },
+    { segment: "politica-de-privacidad", language: "es" },
+    { segment: "aviso-de-privacidad", language: "es" },
   ],
   terms: [
-    "terms",
-    "tos",
-    "terms-of-service",
-    "termsofservice",
-    "terms-and-conditions",
-    "terms-of-use",
-    "agb",
-    "nutzungsbedingungen",
-    "conditions-generales",
-    "conditions-generales-d-utilisation",
-    "conditions-d-utilisation",
-    "cgu",
-    "terminos",
-    "terminos-y-condiciones",
-    "terminos-de-servicio",
-    "condiciones-de-uso",
-    "aviso-legal",
+    { segment: "terms", language: "en" },
+    { segment: "tos", language: "en" },
+    { segment: "terms-of-service", language: "en" },
+    { segment: "termsofservice", language: "en" },
+    { segment: "terms-and-conditions", language: "en" },
+    { segment: "terms-of-use", language: "en" },
+    { segment: "agb", language: "de" },
+    { segment: "nutzungsbedingungen", language: "de" },
+    { segment: "conditions-generales", language: "fr" },
+    { segment: "conditions-generales-d-utilisation", language: "fr" },
+    { segment: "conditions-d-utilisation", language: "fr" },
+    { segment: "cgu", language: "fr" },
+    { segment: "terminos", language: "es" },
+    { segment: "terminos-y-condiciones", language: "es" },
+    { segment: "terminos-de-servicio", language: "es" },
+    { segment: "condiciones-de-uso", language: "es" },
+    { segment: "aviso-legal", language: "es" },
   ],
-  about: ["about", "about-us", "ueber-uns", "a-propos", "sobre-nosotros"],
-  contact: ["contact", "contact-us", "kontakt", "nous-contacter", "contacto", "contactanos"],
+  about: [
+    { segment: "about", language: "en" },
+    { segment: "about-us", language: "en" },
+    { segment: "ueber-uns", language: "de" },
+    { segment: "a-propos", language: "fr" },
+    { segment: "sobre-nosotros", language: "es" },
+  ],
+  contact: [
+    { segment: "contact", language: "en" },
+    { segment: "contact-us", language: "en" },
+    { segment: "kontakt", language: "de" },
+    { segment: "nous-contacter", language: "fr" },
+    { segment: "contacto", language: "es" },
+    { segment: "contactanos", language: "es" },
+  ],
 };
 
 /** Language subdomains / path prefixes we should look through. */
@@ -213,11 +226,13 @@ function pathSegments(href: string): string[] {
     .map((segment) => foldText(segment).replace(/\s+/g, "-"));
 }
 
-function matchPath(segments: string[]): { kind: PageKind; pattern: string } | null {
+function matchPath(
+  segments: string[],
+): { kind: PageKind; pattern: string; language: PageEvidence["language"] } | null {
   for (const segment of segments) {
     for (const kind of Object.keys(PATH_PATTERNS) as PageKind[]) {
-      const pattern = PATH_PATTERNS[kind].find((p) => segment === p);
-      if (pattern) return { kind, pattern };
+      const match = PATH_PATTERNS[kind].find((p) => p.segment === segment);
+      if (match) return { kind, pattern: match.segment, language: match.language };
     }
   }
   return null;
@@ -332,6 +347,7 @@ export function detectSitePages(html: string): SitePageDetection {
         kind: match.kind,
         source: "link-href",
         detail: `Link to "${anchor.href}" contains the "${match.pattern}" path segment.`,
+        language: match.language,
       });
     }
   }
@@ -355,9 +371,10 @@ export function detectSitePages(html: string): SitePageDetection {
     if (!alternate.href) continue;
     const match = matchPath(pathSegments(alternate.href));
     if (!match) continue;
-    const language = isNonEnglishLocale(alternate.hreflang)
-      ? (alternate.hreflang.slice(0, 2).toLowerCase() as PageEvidence["language"])
-      : undefined;
+    // The declared hreflang is authoritative for the language of the page.
+    const language = (isNonEnglishLocale(alternate.hreflang)
+      ? alternate.hreflang.slice(0, 2).toLowerCase()
+      : "en") as PageEvidence["language"];
     record(match.kind, {
       kind: match.kind,
       source: "hreflang",

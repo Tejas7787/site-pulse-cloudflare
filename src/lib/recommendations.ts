@@ -217,17 +217,19 @@ const STATIC_SNIPPETS: Record<string, FixSnippet | undefined> = {
 const STATIC_MESSAGES = Object.keys(STATIC_SNIPPETS);
 
 function cleanHeaderValue(raw: string): string {
-  return (
-    raw
-      .trim()
-      .replace(/^[:\s]+/, "")
-      // A how-to-fix sentence continues after the value ("… includeSubDomains.
-      // Start with a short max-age"); the header value stops at that sentence.
-      .split(/\.\s/)[0]
-      .replace(/[.,]$/, "")
-      .replace(/^["']|["']$/g, "")
-      .trim()
-  );
+  const cleaned = raw
+    .trim()
+    .replace(/^[:\s]+/, "")
+    // A how-to-fix sentence continues after the value ("… includeSubDomains.
+    // Start with a short max-age") or after a parenthetical ("DENY (or
+    // SAMEORIGIN …)"); the header value stops there.
+    .split(/\.\s/)[0]
+    .split(/\s+\(/)[0]
+    .trim();
+  // Only unwrap a *fully* quoted value — a policy value ending in
+  // 'unsafe-inline' must keep its trailing quote.
+  const quoted = /^["']([\s\S]*)["']$/.exec(cleaned);
+  return (quoted ? quoted[1] : cleaned).replace(/[.,]$/, "").trim();
 }
 
 /** Pull `Header-Name: value` out of a how-to-fix sentence (last resort). */

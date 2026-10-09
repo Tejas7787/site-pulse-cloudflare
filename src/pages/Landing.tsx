@@ -5,6 +5,7 @@ import { trackEvent, getVisitorId } from "../lib/analytics";
 import FeedbackModal from "../components/FeedbackModal";
 import { addScanToHistory, getScanHistory, clearScanHistory, domainFromUrl, formatScanDate, type ScanHistoryEntry } from "../lib/scanHistory";
 import { ScoreTrend } from "../components/ScoreTrend";
+import { dedupeIssues } from "../lib/recommendations";
 import { History, Trash2 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useNavigate, Link } from "react-router";
@@ -212,7 +213,10 @@ export default function Landing() {
   const handleKeyDown = (e: React.KeyboardEvent) => { if (e.key === "Enter" && !scanning) handleScan(); };  const handleShare = async () => { if (!scanId) return; trackEvent("share_report_clicked"); try { await navigator.clipboard.writeText(`${window.location.origin}/report/${scanId}`); setCopied(true); setTimeout(() => setCopied(false), 2000); } catch { /* clipboard unavailable (permissions / non-secure context) */ } };
   const handleViewFullReport = () => { if (scanId) navigate(`/report/${scanId}`); };
 
-  const issuesByCategory: Record<string, ScanResult["issues"]> = (result?.issues ?? []).reduce(
+  // Repeated advice is collapsed before it reaches the UI, so a finding that
+  // surfaces twice in the scan appears once in the list below.
+  const dedupedIssues = dedupeIssues(result?.issues ?? []);
+  const issuesByCategory: Record<string, ScanResult["issues"]> = dedupedIssues.reduce(
     (acc: Record<string, ScanResult["issues"]>, issue) => { if (!acc[issue.category]) acc[issue.category] = []; acc[issue.category].push(issue); return acc; }, {},
   );
   const sortedCategories = Object.keys(issuesByCategory).sort(
@@ -446,7 +450,7 @@ export default function Landing() {
               <div className="border-b-2 border-[#1a1a1a] bg-white">
                 <div className="mx-auto max-w-6xl px-4 py-6 sm:px-6">
                   <h3 className="mb-4 text-lg font-black">Quick Wins</h3>
-                  <p className="text-xs text-[#1a1a1a]/50 mb-3">Fix these for the biggest score improvement with the least effort.</p>
+                  <p className="text-xs text-[#1a1a1a]/50 mb-3">Fix these for the biggest score improvement with the least effort. Each one is explained once, in the full Recommendations list further down.</p>
                   <div className="space-y-2">
                     {(result.quickWins ?? []).map((qw, i) => {
                       const pri = priorityConfig[qw.priority];
@@ -473,7 +477,7 @@ export default function Landing() {
               <div className="mx-auto max-w-6xl px-4 py-6 sm:px-6">
                 <div className="flex items-center justify-between">
                   <h3 className="text-lg font-black">Recommendations</h3>
-                  <span className="border-2 border-[#1a1a1a] bg-[#FFFBF0] px-3 py-1 text-xs font-bold">{result.issues.length} issue{result.issues.length !== 1 ? "s" : ""} found</span>
+                  <span className="border-2 border-[#1a1a1a] bg-[#FFFBF0] px-3 py-1 text-xs font-bold">{dedupedIssues.length} issue{dedupedIssues.length !== 1 ? "s" : ""} found</span>
                 </div>
                 <div className="mt-4 space-y-2">
                   {sortedCategories.map((category) => <IssueGroup key={category} category={category} issues={issuesByCategory[category]} />)}

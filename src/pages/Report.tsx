@@ -330,8 +330,8 @@ export default function Report() {
   // Platform-specific fix snippets are only produced when the response named
   // a platform; otherwise the snippets stay neutral and state the assumption.
   const hostingPlatform = detectHostingPlatform({
-    server: s.serverInfo?.server,
-    poweredBy: s.serverInfo?.poweredBy,
+    server: s.serverInfo?.server ?? undefined,
+    poweredBy: s.serverInfo?.poweredBy ?? undefined,
     technology: s.serverInfo?.technology ?? [],
   });
 

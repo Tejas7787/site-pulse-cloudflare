@@ -59,8 +59,11 @@ export function headerSyntaxFor(platform: HostingPlatform): HeaderSyntax {
 }
 
 export interface HostingEvidence {
-  server?: string | undefined;
-  poweredBy?: string | undefined;
+  /** `Server` response header — null when the site suppressed it. */
+  server?: string | null;
+  /** `X-Powered-By` response header. */
+  poweredBy?: string | null;
+  /** Detected technology markers (e.g. "WordPress (detected)"). */
   technology?: string[];
 }
 
