@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   ChevronDown,
@@ -119,13 +119,26 @@ function RecommendationCard({
   index,
   anchor,
   platform,
+  open = false,
 }: {
   issue: RecommendationIssue;
   index: number;
   anchor: string;
   platform: HostingPlatform;
+  /** True when this card is the one a summary row just linked to. */
+  open?: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
+
+  // Following “Details →” should reveal the details, not just the header.
+  // Adjusted during render (the React-sanctioned pattern for deriving state
+  // from a prop change), so the card opens on the same paint it is linked to;
+  // the reader can still close it afterwards.
+  const [wasOpen, setWasOpen] = useState(open);
+  if (open !== wasOpen) {
+    setWasOpen(open);
+    if (open) setExpanded(true);
+  }
   const pri = priorityUI[issue.priority];
   const sev = severityUI[issue.severity];
   const SevIcon = sev.icon;
@@ -263,6 +276,14 @@ function RecommendationCard({
   );
 }
 
+/* ── Hash tracking (so anchor links always find their card) ─────────── */
+
+const subscribeHashChange = (onChange: () => void) => {
+  window.addEventListener("hashchange", onChange);
+  return () => window.removeEventListener("hashchange", onChange);
+};
+const readHash = () => window.location.hash;
+
 /* ── Main FixRecommendations section ────────────────────────────────── */
 
 export default function FixRecommendations({
@@ -281,6 +302,36 @@ export default function FixRecommendations({
   const actionable = canonicalActionable(issues);
   const anchors = anchorsFor(actionable);
 
+  // Summary rows link to cards by anchor. If the linked card is past the
+  // first page of results it would otherwise not exist yet — the link target
+  // must always resolve, so the list opens up for it.
+  const hash = useSyncExternalStore(subscribeHashChange, readHash, () => "");
+  const targetId = hash.startsWith("#fix-") ? hash.slice(1) : "";
+  const targetIndex = targetId
+    ? actionable.findIndex((issue) => anchors.get(issueKey(issue)) === targetId)
+    : -1;
+
+  // A freshly-followed link opens the list; collapsing it again stays put
+  // until the reader follows another link.
+  const [anchorOpen, setAnchorOpen] = useState(true);
+  const [previousTarget, setPreviousTarget] = useState(targetId);
+  if (targetId !== previousTarget) {
+    // A newly-followed link re-opens the list, even after a manual collapse.
+    setPreviousTarget(targetId);
+    setAnchorOpen(true);
+  }
+  const listExpanded = showAll || (anchorOpen && targetIndex >= 0);
+
+  useEffect(() => {
+    if (!targetId || targetIndex < 0) return;
+    // The browser cannot scroll to an element that did not exist when the
+    // link was followed, so bring the freshly-rendered card into view.
+    const frame = window.requestAnimationFrame(() => {
+      document.getElementById(targetId)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [targetId, targetIndex, listExpanded]);
+
   if (actionable.length === 0) return null;
 
   const filtered =
@@ -288,7 +339,7 @@ export default function FixRecommendations({
       ? actionable
       : actionable.filter((i) => i.priority === activeFilter);
 
-  const displayed = showAll ? filtered : filtered.slice(0, 8);
+  const displayed = listExpanded ? filtered : filtered.slice(0, 8);
 
   const counts = {
     all: actionable.length,
@@ -325,8 +376,10 @@ export default function FixRecommendations({
         <p className="text-xs text-[#1a1a1a]/50 mb-2">
           Every fix appears once, here. Expand an issue to see what was
           observed, why it matters, the recommendation, and a copy-paste
-          snippet written for {HOSTING_LABELS[platform]}
-          {platform === "unknown" ? " — with the assumption stated openly." : "."}
+          snippet{" "}
+          {platform === "unknown"
+            ? "that stays platform-neutral and states its assumption, because the response named no platform."
+            : `written for ${HOSTING_LABELS[platform]}, which is what the scan observed.`}
         </p>
         <p className="text-[11px] font-medium text-[#1a1a1a]/45 mb-4">
           Confirmed findings are backed by observed evidence; “Potential risk”
@@ -364,6 +417,7 @@ export default function FixRecommendations({
               index={i}
               anchor={anchors.get(issueKey(issue)) ?? `fix-${i + 1}`}
               platform={platform}
+              open={anchors.get(issueKey(issue)) === targetId}
             />
           ))}
         </div>
@@ -371,10 +425,17 @@ export default function FixRecommendations({
         {/* Show more / less */}
         {filtered.length > 8 && (
           <button
-            onClick={() => setShowAll(!showAll)}
+            onClick={() => {
+              if (listExpanded) {
+                setShowAll(false);
+                setAnchorOpen(false);
+              } else {
+                setShowAll(true);
+              }
+            }}
             className="mt-4 flex items-center gap-1.5 text-xs font-bold text-[#1a1a1a]/50 transition-colors hover:text-[#1a1a1a]"
           >
-            {showAll ? (
+            {listExpanded ? (
               <>
                 <ChevronUp className="size-3.5" /> Show fewer
               </>

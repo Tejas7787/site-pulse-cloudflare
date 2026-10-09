@@ -63,6 +63,49 @@ describe("dedupeIssues", () => {
     expect(result).toHaveLength(2);
   });
 
+  test("REGRESSION: the same check with different evidence is two findings", () => {
+    // `http-status` (and `ssl-valid`) are reused across mutually exclusive
+    // branches — a 404 on one URL and a 500 on another share a key but are
+    // different observations, and both must survive dedupe.
+    const notFound = issue({
+      message: "Page returned 404.",
+      checkKey: "http-status",
+      evidence: "GET https://a.test/missing returned HTTP 404.",
+    });
+    const serverError = issue({
+      message: "Page returned 404.",
+      checkKey: "http-status",
+      evidence: "GET https://a.test/boom returned HTTP 500.",
+    });
+    expect(dedupeIssues([notFound, serverError])).toHaveLength(2);
+  });
+
+  test("REGRESSION: the same observation with different remediation is two findings", () => {
+    const first = issue({
+      message: "Missing Content-Security-Policy header.",
+      checkKey: "header-csp",
+      evidence: "Header absent.",
+      howToFix: "Serve a report-only policy first.",
+    });
+    const second = issue({
+      message: "Missing Content-Security-Policy header.",
+      checkKey: "header-csp",
+      evidence: "Header absent.",
+      howToFix: "Serve an enforcing policy immediately.",
+    });
+    expect(dedupeIssues([first, second])).toHaveLength(2);
+  });
+
+  test("identical advice in every field still collapses to one", () => {
+    const shared = {
+      message: "Missing Referrer-Policy header.",
+      checkKey: "header-rp",
+      evidence: "Header absent on https://a.test/.",
+      howToFix: "Send Referrer-Policy: strict-origin-when-cross-origin.",
+    };
+    expect(dedupeIssues([issue(shared), issue(shared)])).toHaveLength(1);
+  });
+
   test("first-appearance order is preserved", () => {
     const a = issue({ message: "A", checkKey: "a", priority: "recommended" });
     const b = issue({ message: "B", checkKey: "b", priority: "recommended" });
@@ -83,14 +126,28 @@ describe("splitRecommendations / canonicalActionable", () => {
   });
 
   test("the canonical list is deduplicated, actionable only and sorted", () => {
+    const first = issue({ message: "First", checkKey: "a", priority: "critical" });
     const list = canonicalActionable([
       issue({ message: "Nice", checkKey: "n", priority: "nice-to-have" }),
       issue({ message: "Second", checkKey: "b", priority: "recommended" }),
-      issue({ message: "First", checkKey: "a", priority: "critical" }),
-      issue({ message: "First again", checkKey: "a", priority: "important" }),
+      first,
+      // Same check key, weaker copy of the very same finding — collapses.
+      issue({ message: "First", checkKey: "a", priority: "important" }),
     ]);
     expect(list.map((i) => i.checkKey)).toEqual(["a", "b"]);
-    expect(list[0].priority).toBe("critical");
+    expect(list[0]).toBe(first);
+
+    // Same check key but a different message is a different finding:
+    // `http-status` covers a 404, a 500 and other statuses. Neither may be
+    // dropped by dedupe.
+    const statuses = canonicalActionable([
+      issue({ message: "Page returned 404 Not Found.", checkKey: "http-status" }),
+      issue({
+        message: "Server returned 500 Internal Server Error.",
+        checkKey: "http-status",
+      }),
+    ]);
+    expect(statuses).toHaveLength(2);
   });
 
   test("quick wins resolve to their canonical card instead of a duplicate", () => {
@@ -129,6 +186,19 @@ describe("detectHostingPlatform", () => {
     expect(detectHostingPlatform({ server: "cloudflare" })).toBe("cloudflare");
     expect(detectHostingPlatform({ poweredBy: "Vercel" })).toBe("vercel");
     expect(detectHostingPlatform({ server: "Netlify" })).toBe("netlify");
+  });
+
+  test("technology markers that name no platform stay unknown", () => {
+    // A CMS or a framework is not a hosting platform — WordPress behind an
+    // unlabelled server must not make the report claim Apache (the classic
+    // .htaccess wrong guess).
+    expect(
+      detectHostingPlatform({
+        server: null,
+        poweredBy: "Express",
+        technology: ["WordPress (detected)", "React (detected)"],
+      }),
+    ).toBe("unknown");
   });
 
   test("unknown when nothing names a platform", () => {

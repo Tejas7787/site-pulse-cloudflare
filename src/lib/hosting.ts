@@ -96,7 +96,4 @@ export function detectHostingPlatform(evidence: HostingEvidence): HostingPlatfor
   return "unknown";
 }
 
-/** True when the evidence is strong enough to give platform-specific steps. */
-export function hasReliableEvidence(platform: HostingPlatform): boolean {
-  return platform !== "unknown";
-}
+

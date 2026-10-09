@@ -56,11 +56,26 @@ export function normalizeMessage(message: string): string {
     .trim();
 }
 
-/** Stable identity for a finding, used to collapse repeated advice. */
+/**
+ * Stable identity for a finding, used to collapse repeated advice.
+ *
+ * The check key alone is NOT enough: the scan engine reuses keys across
+ * mutually exclusive branches (`http-status` covers a dangling redirect, a
+ * 404, a 500 and other 4xx/5xx; `ssl-valid` covers expired, expiring and
+ * unverifiable). Two findings that share a key but describe different
+ * observations or different remediations are different findings, so the
+ * message, the remediation and the evidence all take part in the identity.
+ * Only genuinely identical advice ever collapses.
+ */
 export function issueKey(issue: RecommendationIssue): string {
-  const checkKey = issue.checkKey?.trim();
-  if (checkKey) return `${issue.category}:${checkKey}`;
-  return `${issue.category}:${normalizeMessage(issue.message)}`;
+  const checkKey = issue.checkKey?.trim() || "-";
+  return [
+    issue.category,
+    checkKey,
+    normalizeMessage(issue.message),
+    normalizeMessage(issue.howToFix),
+    normalizeMessage(issue.evidence ?? ""),
+  ].join("|");
 }
 
 /**
