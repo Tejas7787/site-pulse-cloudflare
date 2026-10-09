@@ -1,5 +1,5 @@
-import { ConvexReactClient } from "convex/react";
 import { api } from "../convex/_generated/api";
+import { convex } from "./convex";
 
 /**
  * First-party, privacy-friendly analytics.
@@ -11,12 +11,11 @@ import { api } from "../convex/_generated/api";
  * - All calls are fire-and-forget: analytics failures never affect the product.
  */
 
-const client = new ConvexReactClient(import.meta.env.VITE_CONVEX_URL as string);
-
 let cachedVisitorId: string | null = null;
 let referrerSentThisSession = false;
 
-function getVisitorId(): string {
+/** Stable, random, first-party visitor id (never a fingerprint). */
+export function getVisitorId(): string {
   if (cachedVisitorId) return cachedVisitorId;
   try {
     let id = window.localStorage.getItem("sp_vid");
@@ -79,7 +78,7 @@ export type EventProps = { targetUrl?: string; path?: string };
 
 export function trackEvent(name: string, props: EventProps = {}): void {
   try {
-    void client
+    void convex
       .mutation(api.analytics.track, {
         name,
         visitorId: getVisitorId(),

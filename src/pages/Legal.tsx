@@ -40,6 +40,7 @@ const CONTENT: Record<
         body: [
           "To understand how SitePulse is used, we collect simple first-party usage counts: page views, scans started, scans completed, and similar product events, together with the page path, the host of an external referrer, a coarse device category (mobile/tablet/desktop), and the URL scanned. These are stored in our backend database and contain no names, email addresses, IP addresses, or location data.",
           "We store a random identifier in your browser's local storage and a separate one per browsing session so we can count unique visitors without identifying anyone. SitePulse sets no cookies for this, and we do not use fingerprinting, advertising networks, or cross-site tracking. You can reset these identifiers at any time by clearing your browser storage.",
+          "We also keep a short-lived counter keyed to that same random identifier so one visitor cannot run an unbounded number of scans at other people's websites. It stores only the identifier, a count, and a timestamp, it is never linked to you, and it is deleted automatically after 24 hours without use.",
         ],
       },
       {
@@ -91,6 +92,7 @@ const CONTENT: Record<
         heading: "Fair use",
         body: [
           "Please don't abuse the service. Automated bulk scanning, attempting to bypass rate limits, or using SitePulse to attack, overload, or probe systems without authorization is strictly prohibited.",
+          "To keep the service available and to avoid hammering other people's servers, each browser may run 20 scans per hour. The scanner tells you when you have reached the limit and how long until it resets.",
         ],
       },
       {

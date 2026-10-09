@@ -250,6 +250,16 @@ const schema = defineSchema(
       path: v.optional(v.string()), // page it was submitted from
       createdAt: v.number(),
     }).index("by_created", ["createdAt"]),
+
+    // Rolling-window counters for the public endpoints (currently: scans).
+    // One document per key; the window resets in place, and stale keys are
+    // swept by the retention cron.
+    rateLimits: defineTable({
+      key: v.string(), // e.g. "scan:<visitorId>"
+      windowStart: v.number(), // epoch ms when the current window opened
+      count: v.number(), // requests consumed inside this window
+    }).index("by_key", ["key"])
+      .index("by_window_start", ["windowStart"]),
   },
   { schemaValidation: false },
 );

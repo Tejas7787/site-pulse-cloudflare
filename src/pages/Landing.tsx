@@ -1,7 +1,7 @@
 import { useState, useRef } from "react";
 import { useAction, useMutation } from "convex/react";
 import { api } from "../convex/_generated/api";
-import { trackEvent } from "../lib/analytics";
+import { trackEvent, getVisitorId } from "../lib/analytics";
 import FeedbackModal from "../components/FeedbackModal";
 import { addScanToHistory, getScanHistory, clearScanHistory, domainFromUrl, formatScanDate, type ScanHistoryEntry } from "../lib/scanHistory";
 import { ScoreTrend } from "../components/ScoreTrend";
@@ -177,7 +177,7 @@ export default function Landing() {
     trackEvent("scan_started", { targetUrl: url.trim() });
     setScanning(true); setError(null); setResult(null); setScanId(null);
     try {
-      const res = await scanWebsite({ url: url.trim() });
+      const res = await scanWebsite({ url: url.trim(), visitorId: getVisitorId() });
       const scanResult = res as ScanResult;
       setResult(scanResult);
       try {

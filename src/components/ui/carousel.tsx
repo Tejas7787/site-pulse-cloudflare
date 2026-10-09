@@ -96,12 +96,16 @@ function Carousel({
 
   React.useEffect(() => {
     if (!api) return
-    onSelect(api)
     api.on("reInit", onSelect)
     api.on("select", onSelect)
+    // Sync the starting scroll state on the next frame: setting state
+    // synchronously in the effect body would cascade a second render.
+    const frame = window.requestAnimationFrame(() => onSelect(api))
 
     return () => {
+      window.cancelAnimationFrame(frame)
       api?.off("select", onSelect)
+      api?.off("reInit", onSelect)
     }
   }, [api, onSelect])
 

@@ -14,4 +14,13 @@ crons.interval(
   { maxDeletes: 200 },
 );
 
+// Sweep rate-limit counters that stopped being used, so the table cannot grow
+// without bound as visitors come and go.
+crons.interval(
+  "delete stale rate limits",
+  { hours: 1 },
+  internal.rateLimit.cleanup,
+  { maxDeletes: 200 },
+);
+
 export default crons;

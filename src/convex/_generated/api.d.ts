@@ -15,6 +15,7 @@ import type * as auth_emailOtp from "../auth/emailOtp.js";
 import type * as crons from "../crons.js";
 import type * as feedback from "../feedback.js";
 import type * as http from "../http.js";
+import type * as rateLimit from "../rateLimit.js";
 import type * as retention from "../retention.js";
 import type * as scan from "../scan.js";
 import type * as scans from "../scans.js";
@@ -34,6 +35,7 @@ declare const fullApi: ApiFromModules<{
   crons: typeof crons;
   feedback: typeof feedback;
   http: typeof http;
+  rateLimit: typeof rateLimit;
   retention: typeof retention;
   scan: typeof scan;
   scans: typeof scans;

@@ -42,7 +42,7 @@ function deterministicAnswer(question: string, data: ScanData): string {
   const q = question.toLowerCase();
 
   // ── "What should I fix first?" ──
-  if (q.includes("fix first") || q.includes("fix first") || q.includes("start with")) {
+  if (q.includes("fix first") || q.includes("what to fix") || q.includes("start with")) {
     const critical = data.issues.filter((i) => i.priority === "critical");
     const important = data.issues.filter((i) => i.priority === "important");
     const top = [...critical, ...important].slice(0, 3);
@@ -191,6 +191,20 @@ export const askAssistant = action({
     scanData: v.string(), // JSON-stringified scan summary
   },
   handler: async (_ctx, { question, scanData }) => {
+    // Questions and payloads are capped before anything else happens: the
+    // assistant is public, so an unbounded argument would be a free way to
+    // push arbitrary amounts of text into a paid model call.
+    const trimmedQuestion = question.trim().slice(0, 500);
+    if (trimmedQuestion.length === 0) {
+      return { answer: "Ask me about your scan — for example: \"What should I fix first?\"" };
+    }
+    if (scanData.length > 200_000) {
+      return {
+        answer:
+          "The scan data for this report is too large to analyse. Please run a new scan and try again.",
+      };
+    }
+
     let parsed: ScanData;
     try {
       // scanData is expected to be a JSON string from the frontend.
@@ -226,7 +240,7 @@ export const askAssistant = action({
         model: "gpt-4o-mini",
         messages: [
           { role: "system", content: systemPrompt },
-          { role: "user", content: `Scan data:\n${scanData}\n\nQuestion: ${question}` },
+          { role: "user", content: `Scan data:\n${scanData}\n\nQuestion: ${trimmedQuestion}` },
         ],
         temperature: 0.3,
         maxTokens: 500,
@@ -240,6 +254,6 @@ export const askAssistant = action({
     }
 
     // Deterministic fallback — answers from real scan data only
-    return { answer: deterministicAnswer(question, parsed) };
+    return { answer: deterministicAnswer(trimmedQuestion, parsed) };
   },
 });

@@ -7,6 +7,17 @@ function clean(value: string | undefined, max = 2000): string | undefined {
   return trimmed.length > 0 ? trimmed.slice(0, max) : undefined;
 }
 
+// Deliberately permissive: the field is optional, so anything that is not a
+// plausible address is treated as "no contact details given" rather than
+// silently storing junk in the admin view.
+const EMAIL_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+
+function cleanEmail(value: string | undefined): string | undefined {
+  const email = clean(value, 254);
+  if (!email) return undefined;
+  return EMAIL_SHAPE.test(email) ? email : undefined;
+}
+
 /** Public submission endpoint. Stores only what the user typed — nothing else. */
 export const submit = mutation({
   args: {
@@ -28,7 +39,7 @@ export const submit = mutation({
       improve: clean(args.improve),
       featureRequest: clean(args.featureRequest),
       problem: clean(args.problem),
-      email: clean(args.email, 254),
+      email: cleanEmail(args.email),
       path: clean(args.path, 256),
       createdAt: Date.now(),
     });

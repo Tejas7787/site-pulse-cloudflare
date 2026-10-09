@@ -2,6 +2,7 @@
 
 import { v } from "convex/values";
 import { action } from "./_generated/server";
+import { internal } from "./_generated/api";
 import type { Issue, Priority, Severity, CheckResult, CategoryScore, QuickWin, SSLInfo, CookieInfo, MixedContent, ServerInfo, SiteIdentity, ScanSummary } from "../types/scan";
 import { scoreCategory, overallScore, CATEGORY_SCORE_FORMULA } from "../lib/scoring";
 import { fetchTarget, detectBlock, isHtmlResponse } from "../lib/fetchTarget";
@@ -96,8 +97,21 @@ function severityForPriority(p: Priority): Severity {
 // ── Main Scan ────────────────────────────────────────────────────────
 
 export const scanWebsite = action({
-  args: { url: v.string() },
-  handler: async (_ctx, { url }) => {
+  args: { url: v.string(), visitorId: v.optional(v.string()) },
+  handler: async (ctx, { url, visitorId }) => {
+    // 0. Quota — checked before anything is sent to the target site, so a
+    //    rejected visitor can never generate traffic against someone else's
+    //    server. See src/convex/rateLimit.ts for the window and the limit.
+    const quota = await ctx.runMutation(internal.rateLimit.consumeScanQuota, {
+      visitorId,
+    });
+    if (!quota.allowed) {
+      const minutes = Math.max(1, Math.ceil(quota.retryAfterMs / 60_000));
+      throw new Error(
+        `You've reached the scan limit (${quota.limit} scans per hour on the free tier). Please try again in about ${minutes} minute${minutes === 1 ? "" : "s"}.`,
+      );
+    }
+
     // 1. Validate & normalize
     let normalizedUrl = url.trim();
     if (!/^https?:\/\//i.test(normalizedUrl)) normalizedUrl = `https://${normalizedUrl}`;
