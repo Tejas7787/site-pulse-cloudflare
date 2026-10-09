@@ -1,5 +1,7 @@
 import { v } from "convex/values";
-import { mutation, query } from "./_generated/server";
+import { internalMutation, mutation, query } from "./_generated/server";
+import { internal } from "./_generated/api";
+import { scanRetentionCutoff } from "./retention";
 
 const categoryScoreValidator = v.object({
   score: v.number(), passed: v.number(), failed: v.number(), warnings: v.number(), notChecked: v.number(),
@@ -112,4 +114,38 @@ export const saveScan = mutation({
 export const getScan = query({
   args: { id: v.id("scans") },
   handler: async (ctx, args) => await ctx.db.get(args.id),
+});
+
+/**
+ * Deletes scan reports older than the retention window (see ./retention.ts).
+ * Scheduled by ./crons.ts — internal only, never callable from a client.
+ *
+ * Safety properties:
+ * - Only touches the `scans` table, and only rows whose server-set
+ *   `scannedAt` (index `by_scanned_at`) predates the cutoff — it cannot
+ *   delete analytics, feedback, users, or any unrelated record.
+ * - Bounded batch per run (1–500 rows) so a single invocation stays small.
+ * - Guaranteed progress: deleted rows leave the index, so a backlog is
+ *   drained by chained runs instead of an unbounded loop.
+ * - Report/history UX is unaffected structurally: the report page renders
+ *   its "Report Not Found" state for deleted ids, and Landing score history
+ *   lives in localStorage independent of these documents.
+ */
+export const deleteExpiredScans = internalMutation({
+  args: { maxDeletes: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    const now = Date.now();
+    const cutoff = scanRetentionCutoff(now);
+    const max = Math.min(Math.max(Math.floor(args.maxDeletes ?? 200), 1), 500);
+    const expired = await ctx.db
+      .query("scans")
+      .withIndex("by_scanned_at", (q) => q.lt("scannedAt", cutoff))
+      .take(max);
+    for (const doc of expired) await ctx.db.delete(doc._id);
+    // Full batch ⇒ possible backlog; chain another bounded run shortly.
+    if (expired.length === max) {
+      ctx.scheduler.runAfter(1_000, internal.scans.deleteExpiredScans, { maxDeletes: max });
+    }
+    return { deleted: expired.length, cutoff };
+  },
 });

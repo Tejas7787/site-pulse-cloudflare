@@ -538,7 +538,7 @@ export default function Landing() {
           >
             💬 Give Feedback
           </button>
-          <p className="text-xs text-white/50">Free website health checker. No tracking. No sign-up required.</p>
+          <p className="text-xs text-white/50">Free website health checker. First-party analytics only — no ads, no cross-site tracking. No sign-up required.</p>
         </div>
       </footer>
 

@@ -827,7 +827,7 @@ export default function Report() {
             </div>
             <div className="border-l-3 border-purple-400 pl-3">
               <h3 className="text-sm font-black">Privacy & Safety</h3>
-              <p className="mt-1 text-xs leading-relaxed text-[#1a1a1a]/65">We never request passwords, API keys, or private credentials. Only publicly accessible pages are analyzed. No cookies are set, no tracking scripts are injected, and no modifications are made to your website. Scans are stored anonymously for 30 days so you can share and revisit reports.</p>
+              <p className="mt-1 text-xs leading-relaxed text-[#1a1a1a]/65">We never request passwords, API keys, or private credentials. Only publicly accessible pages are analyzed. No cookies are set, no tracking scripts are injected, and no modifications are made to your website. Scans are stored anonymously for 30 days, then deleted automatically, so you can share and revisit reports in the meantime.</p>
             </div>
           </div>
         </div>
@@ -874,7 +874,7 @@ export default function Report() {
             <Link to="/terms" className="text-white/70 underline-offset-2 transition-colors hover:text-white hover:underline">Terms of Service</Link>
             <a href="mailto:sitepulse@freebuff.app" className="text-white/70 underline-offset-2 transition-colors hover:text-white hover:underline">Contact</a>
           </nav>
-          <p className="text-xs text-white/50">Free website health checker. No tracking. No sign-up required.</p>
+          <p className="text-xs text-white/50">Free website health checker. First-party analytics only — no ads, no cross-site tracking. No sign-up required.</p>
         </div>
       </footer>
     </div>

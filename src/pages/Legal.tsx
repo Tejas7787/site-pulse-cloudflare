@@ -9,33 +9,55 @@ const CONTENT: Record<
 > = {
   privacy: {
     title: "Privacy Policy",
-    updated: "Last updated: August 24, 2026",
+    updated: "Last updated: October 9, 2026",
     sections: [
       {
-        heading: "What we collect",
+        heading: "What SitePulse processes",
         body: [
-          "SitePulse collects only the information needed to run a scan: the public URL you enter and the resulting analysis data for that page. No account or sign-up is required.",
-          "We do not request, collect, or store passwords, cookies, API keys, or any private credentials.",
+          "To run a scan we process: the public URL you enter; the HTTP request and response data our scanner receives for it (status code, redirect chain, response headers, timing, and the HTML body up to a size limit); and the analysis results derived from them. No account or sign-up is required to scan a website.",
+          "We do not request or store passwords, API keys, or any private credentials. We collect personal information only when you choose to provide it: the optional email field in the feedback form, or an email address you use for email sign-in (stored on your account so we can send you sign-in codes).",
         ],
       },
       {
-        heading: "How your scans are used",
+        heading: "Saved reports: public to anyone with the link, deleted after 30 days",
         body: [
-          "Scan results are stored so you can view and share your report via a unique link. Reports are accessible to anyone with the link, so share them thoughtfully.",
-          "We do not sell or share your data with third parties, and we do not use tracking pixels or advertising cookies.",
+          "Scan results are stored so you can view and share your report via a unique link. Reports are not listed publicly, but anyone who has the link can open the report and see its scores, findings, and evidence — so share links thoughtfully.",
+          "Saved reports are deleted automatically 30 days after the scan. After that the report link stops working.",
+          "We do not sell your data. Data reaches the service providers listed below only in connection with the features described in this policy.",
         ],
       },
       {
-        heading: "Anonymous usage statistics",
+        heading: "Service providers",
         body: [
-          "To understand how SitePulse is used, we collect simple, anonymous usage counts: page views, scans started, scans completed, and similar product events. These measurements are first-party, cookie-less, and contain no personal information — no names, emails, IP addresses, or location data.",
-          "We store a random identifier in your browser's local storage and a separate one per browsing session so we can count unique visitors without identifying anyone. We do not use fingerprinting, advertising networks, or cross-site tracking. You can reset these identifiers at any time by clearing your browser storage.",
+          "Convex (convex.dev) — SitePulse's backend platform: database, authentication, and server functions. Scan reports, analytics events, feedback, and accounts are stored and processed there.",
+          "VLY AI gateway — the AI Assistant on report pages sends your question together with a summary of the report you are viewing (its URL, scores, and findings) to the VLY AI gateway, which processes it with an AI model (currently gpt-4o-mini) to generate the answer. When the gateway is unavailable, a local answer engine replies from the report data only, without an AI model.",
+          "VLY email integration (integrations.vly.ai) — if you use email sign-in, your one-time sign-in code is sent to you through this service.",
+          "Our web hosting provider serves the site's static files.",
+        ],
+      },
+      {
+        heading: "Usage statistics (first-party only)",
+        body: [
+          "To understand how SitePulse is used, we collect simple first-party usage counts: page views, scans started, scans completed, and similar product events, together with the page path, the host of an external referrer, a coarse device category (mobile/tablet/desktop), and the URL scanned. These are stored in our backend database and contain no names, email addresses, IP addresses, or location data.",
+          "We store a random identifier in your browser's local storage and a separate one per browsing session so we can count unique visitors without identifying anyone. SitePulse sets no cookies for this, and we do not use fingerprinting, advertising networks, or cross-site tracking. You can reset these identifiers at any time by clearing your browser storage.",
+        ],
+      },
+      {
+        heading: "Feedback",
+        body: [
+          "If you submit feedback we store your rating, whatever you chose to write in the optional fields, the page you submitted from, and your email address only if you entered one (so we can reply). Feedback is visible to the SitePulse administrators and is kept until it is removed.",
+        ],
+      },
+      {
+        heading: "Your options",
+        body: [
+          "Clearing your browser storage removes the local identifiers and your local scan history at any time. Saved reports disappear automatically after 30 days. To ask about information tied to an email address you voluntarily provided (a feedback email address or a sign-in account), email sitepulse@freebuff.app.",
         ],
       },
       {
         heading: "What SitePulse does not do",
         body: [
-          "SitePulse only analyzes publicly accessible pages. It never attempts to log in, exploit vulnerabilities, or perform destructive actions against scanned sites.",
+          "SitePulse only analyzes publicly accessible pages. It never attempts to log in, exploit vulnerabilities, or perform destructive actions against scanned sites. It does not set advertising cookies or inject third-party tracking scripts.",
         ],
       },
       {
@@ -48,12 +70,21 @@ const CONTENT: Record<
   },
   terms: {
     title: "Terms of Service",
-    updated: "Last updated: August 24, 2026",
+    updated: "Last updated: October 9, 2026",
     sections: [
       {
         heading: "Using SitePulse",
         body: [
           "SitePulse is provided free of charge for checking publicly accessible websites. You agree to use it only for sites you own or have permission to analyze.",
+        ],
+      },
+      {
+        heading: "How SitePulse scans work (and what it cannot know)",
+        body: [
+          "SitePulse scans a website by making plain HTTP requests from a server. It does not run a real browser, so content that only appears after JavaScript runs, browser-rendered layouts, and laboratory performance metrics are not measured — checks that require them are reported as \"Unable to Verify\" rather than guessed, and they count neither for nor against a score.",
+          "If the target blocks the scan (for example rate limiting or bot challenges) or returns an error page, the affected checks are reported as Unable to Verify as well — never as confirmed failures.",
+          "Reports are publicly accessible to anyone who has the report link, and saved reports are deleted automatically 30 days after the scan.",
+          "A clean scan does not guarantee that a website is completely secure: an HTTP-level scan cannot cover every kind of vulnerability and is not a security certification. Verify security guidance before acting on it in production.",
         ],
       },
       {
@@ -127,7 +158,7 @@ function LegalPage({ kind }: { kind: LegalKind }) {
             <Link to="/terms" className="text-white/70 underline-offset-2 transition-colors hover:text-white hover:underline">Terms of Service</Link>
             <a href="mailto:sitepulse@freebuff.app" className="text-white/70 underline-offset-2 transition-colors hover:text-white hover:underline">Contact</a>
           </nav>
-          <p className="text-xs text-white/50">Free website health checker. No tracking. No sign-up required.</p>
+          <p className="text-xs text-white/50">Free website health checker. First-party analytics only — no ads, no cross-site tracking. No sign-up required.</p>
         </div>
       </footer>
     </div>
