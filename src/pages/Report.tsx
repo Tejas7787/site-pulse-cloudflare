@@ -13,6 +13,7 @@ import {
   ExternalLink, Activity, Share2, Loader2, Globe, Shield, Search, Zap, Eye,
   BarChart3, TrendingUp, TrendingDown, Minus, Target, Lightbulb, Lock, Cookie,
   Image, Server, FileText, BadgeCheck, AlertOctagon, ShieldAlert, BookOpen,
+  FileDown, Printer,
 } from "lucide-react";
 
 const gradeColors: Record<string, string> = { A: "bg-emerald-400", B: "bg-lime-400", C: "bg-yellow-400", D: "bg-orange-400", F: "bg-red-400" };
@@ -232,6 +233,8 @@ export default function Report() {
   const { id } = useParams<{ id: string }>();
   const [copied, setCopied] = useState(false);
   const [prevScore, setPrevScore] = useState<number | null>(null);
+  const [pdfState, setPdfState] = useState<"idle" | "working" | "error">("idle");
+  const [pdfError, setPdfError] = useState<string | null>(null);
   const scan = useQuery(api.scans.getScan, id ? { id: id as Id<"scans"> } : "skip");
 
   // Analytics: report viewed (once per mounted report id)
@@ -254,6 +257,54 @@ export default function Report() {
   }, [scan]);
 
   const handleShare = async () => { trackEvent("share_report_clicked", { path: window.location.pathname }); try { await navigator.clipboard.writeText(window.location.href); setCopied(true); setTimeout(() => setCopied(false), 2000); } catch {} };
+
+  // ── PDF export ────────────────────────────────────────────────────────────
+  // Generated entirely in the browser from the SAME saved document this page
+  // already loaded (api.scans.getScan) — no second scan, no extra endpoint, no
+  // data beyond what viewing this report already exposes.
+  const handleDownloadPdf = async () => {
+    if (pdfState === "working") return;
+    setPdfState("working");
+    setPdfError(null);
+    trackEvent("pdf_export_started", { path: window.location.pathname });
+    try {
+      if (typeof Blob === "undefined" || typeof URL === "undefined" || typeof URL.createObjectURL !== "function") {
+        throw new Error("This browser cannot generate PDFs directly.");
+      }
+      let pdfModule: typeof import("../lib/pdfReport");
+      try {
+        pdfModule = await import("../lib/pdfReport");
+      } catch {
+        throw new Error("Direct PDF generation is unavailable in this browser.");
+      }
+      const { bytes, fileName } = pdfModule.buildScanPdf(scan as ScanDoc, {
+        reportUrl: window.location.href,
+        scanId: id,
+        generatedAt: Date.now(),
+      });
+      const blob = new Blob([bytes as BlobPart], { type: "application/pdf" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 10_000);
+      trackEvent("pdf_export_completed", { path: window.location.pathname });
+      setPdfState("idle");
+    } catch (err) {
+      trackEvent("pdf_export_failed", { path: window.location.pathname });
+      setPdfError(err instanceof Error ? err.message : "Unknown error while generating the PDF.");
+      setPdfState("error");
+    }
+  };
+
+  // Fallback when direct PDF generation is unsupported or fails.
+  const handlePrintFallback = () => {
+    trackEvent("pdf_print_fallback", { path: window.location.pathname });
+    window.print();
+  };
 
   if (scan === undefined) return (<div className="min-h-screen bg-[#FFFBF0] flex items-center justify-center"><div className="flex flex-col items-center gap-4"><Loader2 className="size-8 animate-spin text-[#1a1a1a]/40" /><p className="text-sm font-medium text-[#1a1a1a]/60">Loading report...</p></div></div>);
   if (scan === null) return (<div className="min-h-screen bg-[#FFFBF0] flex items-center justify-center px-4"><div className="text-center"><div className="mb-6 flex size-16 mx-auto items-center justify-center border-2 border-[#1a1a1a] bg-red-100"><XCircle className="size-8 text-red-600" /></div><h1 className="text-2xl font-black">Report Not Found</h1><p className="mt-2 text-sm text-[#1a1a1a]/60 max-w-sm">This scan report does not exist or may have been removed.</p><Link to="/" className="mt-6 inline-flex items-center gap-2 border-2 border-[#1a1a1a] bg-[#FDE68A] px-5 py-2.5 text-sm font-black shadow-[3px_3px_0px_0px_#1a1a1a] transition-all hover:shadow-[1px_1px_0px_0px_#1a1a1a] hover:translate-x-[2px] hover:translate-y-[2px]"><ArrowLeft className="size-4" />Back to SitePulse</Link></div></div>);
@@ -297,11 +348,45 @@ export default function Report() {
   return (
     <div className="min-h-screen bg-[#FFFBF0] text-[#1a1a1a]">
       <nav className="border-b-2 border-[#1a1a1a] bg-[#FFFBF0]">
-        <div className="mx-auto flex max-w-5xl items-center justify-between px-4 py-4 sm:px-6">
+        <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-2 px-4 py-4 sm:px-6">
           <Link to="/" className="flex items-center gap-2 text-sm font-bold text-[#1a1a1a]/60 transition-colors hover:text-[#1a1a1a]"><ArrowLeft className="size-4" />SitePulse</Link>
-          <button onClick={handleShare} className="flex items-center gap-2 border-2 border-[#1a1a1a] bg-[#DBEAFE] px-3 py-1.5 text-xs font-bold transition-colors hover:bg-[#BFDBFE]"><Share2 className="size-3.5" />{copied ? "Copied!" : "Share Report"}</button>
+          <div className="flex flex-wrap items-center justify-end gap-2 print:hidden">
+            <button onClick={handleShare} className="flex items-center gap-2 border-2 border-[#1a1a1a] bg-[#DBEAFE] px-3 py-1.5 text-xs font-bold transition-colors hover:bg-[#BFDBFE]"><Share2 className="size-3.5" />{copied ? "Copied!" : "Share Report"}</button>
+            <button
+              onClick={handleDownloadPdf}
+              disabled={pdfState === "working"}
+              aria-label="Download PDF report"
+              className="flex items-center gap-2 border-2 border-[#1a1a1a] bg-[#FDE68A] px-3 py-1.5 text-xs font-bold transition-colors hover:bg-[#FCD34D] disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {pdfState === "working" ? <Loader2 className="size-3.5 animate-spin" /> : <FileDown className="size-3.5" />}
+              {pdfState === "working" ? "Generating…" : "Download PDF Report"}
+            </button>
+          </div>
         </div>
       </nav>
+
+      {/* PDF export error + print/save fallback */}
+      {pdfState === "error" && (
+        <div role="alert" className="border-b-2 border-[#1a1a1a] bg-red-50 print:hidden">
+          <div className="mx-auto flex max-w-5xl flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+            <div className="flex items-start gap-2">
+              <AlertTriangle className="mt-0.5 size-4 shrink-0 text-red-600" />
+              <div>
+                <p className="text-xs font-black uppercase tracking-wider text-red-700">PDF export failed</p>
+                <p className="mt-0.5 break-words text-xs text-red-700/80">{pdfError}</p>
+              </div>
+            </div>
+            <div className="flex shrink-0 flex-wrap gap-2">
+              <button onClick={handleDownloadPdf} className="flex items-center gap-1.5 border-2 border-[#1a1a1a] bg-[#FDE68A] px-3 py-1.5 text-xs font-bold transition-colors hover:bg-[#FCD34D]">
+                <FileDown className="size-3.5" />Try again
+              </button>
+              <button onClick={handlePrintFallback} className="flex items-center gap-1.5 border-2 border-[#1a1a1a] bg-white px-3 py-1.5 text-xs font-bold transition-colors hover:bg-[#FFFBF0]">
+                <Printer className="size-3.5" />Print / Save as PDF
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Header with Score + Trend + Trust Signals */}
       <section className="border-b-2 border-[#1a1a1a] bg-white">
@@ -757,8 +842,9 @@ export default function Report() {
         </div>
       </section>
 
-      {/* AI Assistant — LAST SECTION before footer */}
-      <AIAssistant
+      {/* AI Assistant — LAST SECTION before footer (hidden when printing) */}
+      <div className="print:hidden">
+        <AIAssistant
         scan={{
           url: s.url,
           score: s.score,
@@ -777,6 +863,7 @@ export default function Report() {
           responseTime: s.responseTime,
         }}
       />
+      </div>
 
       <footer className="border-t-2 border-[#1a1a1a] bg-[#1a1a1a] text-white">
         <div className="mx-auto flex max-w-5xl flex-col items-center justify-between gap-4 px-4 py-6 sm:flex-row sm:px-6">
