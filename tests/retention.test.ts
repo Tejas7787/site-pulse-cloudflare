@@ -52,11 +52,12 @@ describe("scan retention rules", () => {
   test("deleteExpiredScans does not report success when deletion fails", () => {
     const scans = readFileSync(join(import.meta.dir, "..", "src", "convex", "scans.ts"), "utf8");
     expect(scans).toContain('failed: true');
-    expect(scans).toContain('retry limit reached');
-    // The retry exhausted path returns a clear failure reason.
     expect(scans).toContain('retry limit reached (attempt');
-    // It must not simply return the full batch count as a success.
-    expect(scans).not.toMatch(/return \{\s*deleted: expired.length,\s*cutoff\s*\}/);
+    // The retry-exhausted path must return an explicit failure reason, not a
+    // bare success payload.
+    expect(scans).toContain('retry limit reached (attempt ${attempt} > ${DELETE_MAX_RETRY_CHAINS})');
+    // It must not simply return the full batch count as if it succeeded.
+    expect(scans).not.toMatch(/return \{\s*deleted: expired\.length,\s*cutoff\s*\}/);
   });
 
   test("cleanup is scheduled and bounded in Convex code", () => {
