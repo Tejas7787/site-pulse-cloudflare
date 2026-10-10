@@ -216,6 +216,55 @@ describe("legacy documents without saved category data", () => {
   });
 });
 
+describe("reported live case — categories 83 / 69 / 41 / 83 / 79", () => {
+  // A user reported that the live site shows 67/C for these displayed
+  // categories and calculated by hand that the weighted formula "gives 65.2".
+  // The hand arithmetic is wrong — the weighted sum is exactly 66.5:
+  //   Performance 83 × .25 = 20.75
+  //   SEO          69 × .25 = 17.25
+  //   Security     41 × .30 = 12.30
+  //   Accessibility 83 × .10 = 8.30
+  //   Tech Health  79 × .10 =  7.90
+  //   total                 = 66.50 → round → 67 → grade C (≥ 65).
+  // These tests pin the deployed behaviour to that arithmetic so the correct
+  // value can never be "fixed" to the mis-added 65.
+  const scan = mkScan({
+    performanceScore: 83, seoScore: 69, securityScore: 41,
+    accessibilityScore: 83, technicalHealthScore: 79,
+    score: 67, grade: "C",
+    performanceChecks: { passed: 5, failed: 1, warnings: 0, notChecked: 0, hasScore: true },     // round(100×5/6) = 83
+    seoChecks: { passed: 9, failed: 4, warnings: 0, notChecked: 0, hasScore: true },              // round(100×9/13) = 69
+    securityChecks: { passed: 7, failed: 10, warnings: 0, notChecked: 0, hasScore: true },        // round(100×7/17) = 41
+    accessibilityChecks: { passed: 5, failed: 1, warnings: 0, notChecked: 0, hasScore: true },    // round(100×5/6) = 83
+    technicalHealthChecks: { passed: 11, failed: 3, warnings: 0, notChecked: 0, hasScore: true }, // round(100×11/14) = 79
+  });
+  const resolved = resolveScanScores(scan);
+
+  test("each category re-derives to the exact displayed score", () => {
+    expect(resolved.categories.Performance?.score).toBe(83);
+    expect(resolved.categories.SEO?.score).toBe(69);
+    expect(resolved.categories.Security?.score).toBe(41);
+    expect(resolved.categories.Accessibility?.score).toBe(83);
+    expect(resolved.categories["Technical Health"]?.score).toBe(79);
+  });
+
+  test("the weighted overall is 66.5 → 67 with grade C — not 65", () => {
+    const terms = [83 * 0.25, 69 * 0.25, 41 * 0.3, 83 * 0.1, 79 * 0.1];
+    const weightedSum = terms.reduce((a, b) => a + b, 0);
+    expect(weightedSum).toBeCloseTo(66.5, 10); // 66.50, not 65.2
+    expect(resolved.overall).toBe(67);
+    expect(resolved.overall).toBe(recomputeOverall(resolved.categories));
+    expect(resolved.grade).toBe("C"); // 65 and 67 are both grade C
+  });
+
+  test("the PDF renders 67/100 and GRADE C for this document", () => {
+    const text = pdfNorm(scan);
+    expect(text).toContain("67/100");
+    expect(text).toContain("GRADE C");
+    expect(text).not.toContain("65/100");
+  });
+});
+
 describe("both renderers share one derivation", () => {
   test("Report.tsx and pdfReport.ts both import resolveScanScores from lib/scoring", () => {
     const read = (p: string) => readFileSync(new URL(p, import.meta.url), "utf8");
