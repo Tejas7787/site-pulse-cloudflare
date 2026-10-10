@@ -14,6 +14,7 @@
 // clipped.
 
 import { jsPDF } from "jspdf";
+import { resolveScanScores } from "./scoring";
 
 // ── Input types (structural subset of the saved scan document) ───────────────
 
@@ -629,24 +630,34 @@ function countsFor(scan: PdfScanInput): {
   };
 }
 
+// Category data is DERIVED through the shared resolver (lib/scoring.ts) —
+// exactly what the interactive report page shows for the same document — so
+// the two can never disagree about a score, a grade, or which categories are
+// scoreable at all. Saved factors/formula text is still rendered verbatim.
 function categoryData(scan: PdfScanInput) {
-  const pick = (score: number | undefined, checks: PdfCategoryChecks | undefined) => ({
-    score: score ?? checks?.score ?? 0,
-    hasScore: checks?.hasScore ?? true,
-    passed: checks?.passed ?? 0,
-    failed: checks?.failed ?? 0,
-    warnings: checks?.warnings ?? 0,
-    unverified: checks?.unverified ?? checks?.notChecked ?? 0,
-    notApplicable: checks?.notApplicable ?? 0,
-    factors: checks?.factors ?? [],
-    formula: checks?.formula,
-  });
+  const resolved = resolveScanScores(scan).categories;
+  const pick = (category: string, checks: PdfCategoryChecks | undefined) => {
+    const r = resolved[category] ?? null;
+    return {
+      // A category with no saved check data and no saved score at all has NO
+      // score — it renders as "—", never as 0/100.
+      score: r?.score ?? 0,
+      hasScore: r !== null && r.score !== null,
+      passed: r?.passed ?? 0,
+      failed: r?.failed ?? 0,
+      warnings: r?.warnings ?? 0,
+      unverified: r?.unverified ?? 0,
+      notApplicable: r?.notApplicable ?? 0,
+      factors: checks?.factors ?? [],
+      formula: checks?.formula,
+    };
+  };
   return {
-    Performance: pick(scan.performanceScore, scan.performanceChecks),
-    SEO: pick(scan.seoScore, scan.seoChecks),
-    Security: pick(scan.securityScore, scan.securityChecks),
-    Accessibility: pick(scan.accessibilityScore, scan.accessibilityChecks),
-    "Technical Health": pick(scan.technicalHealthScore, scan.technicalHealthChecks),
+    Performance: pick("Performance", scan.performanceChecks),
+    SEO: pick("SEO", scan.seoChecks),
+    Security: pick("Security", scan.securityChecks),
+    Accessibility: pick("Accessibility", scan.accessibilityChecks),
+    "Technical Health": pick("Technical Health", scan.technicalHealthChecks),
   } as Record<string, ReturnType<typeof pick>>;
 }
 
@@ -737,11 +748,12 @@ function composeCover(eng: Engine, scan: PdfScanInput, opts: PdfOptions, generat
     ]);
   }
 
-  // Overall score band
-  const overallScored = scan.overallScored ?? summary?.overallScored ?? true;
-  const scoreText = overallScored ? `${scan.score}/100` : "—";
+  // Overall score band — same derived values the report page renders.
+  const display = resolveScanScores(scan);
+  const overallScored = display.overallScored;
+  const scoreText = overallScored && display.overall !== null ? `${display.overall}/100` : "—";
   const chips: ChipSpec[] = [];
-  if (overallScored && scan.grade) chips.push({ text: `GRADE ${scan.grade}`, bg: AMBER, fg: INK, border: INK });
+  if (overallScored && display.grade) chips.push({ text: `GRADE ${display.grade}`, bg: AMBER, fg: INK, border: INK });
   if (scan.riskLevel) chips.push({ text: `${scan.riskLevel.toUpperCase()} RISK`, bg: WHITE, fg: INK, border: INK });
   if (scan.betterThanPercent) chips.push({ text: `BETTER THAN ${scan.betterThanPercent}% OF SCANNED SITES`, bg: WHITE, fg: GRAY, border: LIGHT_GRAY });
 

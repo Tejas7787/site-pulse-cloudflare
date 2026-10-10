@@ -14,6 +14,7 @@ import {
   splitRecommendations,
 } from "../lib/recommendations";
 import { detectHostingPlatform } from "../lib/hosting";
+import { resolveScanScores, scoreToGrade } from "../lib/scoring";
 import { ScoreTrend } from "../components/ScoreTrend";
 import AIAssistant from "../components/AIAssistant";
 import type { Id } from "../convex/_generated/dataModel";
@@ -51,7 +52,6 @@ const scoreWeightLabels: Record<string, string> = { Security: "30%", Performance
 
 function formatDate(ts: number) { return new Date(ts).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" }); }
 function formatTime(ts?: number) { return ts ? new Date(ts).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", second: "2-digit" }) : "—"; }
-function scoreToGrade(s: number) { return s >= 90 ? "A" : s >= 80 ? "B" : s >= 65 ? "C" : s >= 50 ? "D" : "F"; }
 function scoreToColor(s: number) { return scoreBarColors[scoreToGrade(s)] || "bg-gray-400"; }
 
 interface ChecksDoc {
@@ -301,16 +301,36 @@ export default function Report() {
   if (scan === null) return (<div className="min-h-screen bg-[#FFFBF0] flex items-center justify-center px-4"><div className="text-center"><div className="mb-6 flex size-16 mx-auto items-center justify-center border-2 border-[#1a1a1a] bg-red-100"><XCircle className="size-8 text-red-600" /></div><h1 className="text-2xl font-black">Report Not Found</h1><p className="mt-2 text-sm text-[#1a1a1a]/60 max-w-sm">This scan report does not exist or may have been removed.</p><Link to="/" className="mt-6 inline-flex items-center gap-2 border-2 border-[#1a1a1a] bg-[#FDE68A] px-5 py-2.5 text-sm font-black shadow-[3px_3px_0px_0px_#1a1a1a] transition-all hover:shadow-[1px_1px_0px_0px_#1a1a1a] hover:translate-x-[2px] hover:translate-y-[2px]"><ArrowLeft className="size-4" />Back to SitePulse</Link></div></div>);
 
   const s = scan as ScanDoc;
-  const overallScored = s.overallScored ?? s.summary?.overallScored ?? true;
-  const grade = overallScored ? (s.grade || scoreToGrade(s.score)) : "—";
-  const catScores: Record<string, number> = { Performance: s.performanceScore ?? 0, SEO: s.seoScore ?? 0, Security: s.securityScore ?? 0, Accessibility: s.accessibilityScore ?? 0, "Technical Health": s.technicalHealthScore ?? 0 };
-  const catChecks: Record<string, ChecksDoc> = {
-    Performance: s.performanceChecks ?? { score: 0, passed: 0, failed: 0, warnings: 0, notChecked: 0 },
-    SEO: s.seoChecks ?? { score: 0, passed: 0, failed: 0, warnings: 0, notChecked: 0 },
-    Security: s.securityChecks ?? { score: 0, passed: 0, failed: 0, warnings: 0, notChecked: 0 },
-    Accessibility: s.accessibilityChecks ?? { score: 0, passed: 0, failed: 0, warnings: 0, notChecked: 0 },
-    "Technical Health": s.technicalHealthChecks ?? { score: 0, passed: 0, failed: 0, warnings: 0, notChecked: 0 },
+  // Scores shown on this page are DERIVED from the saved applicable checks by
+  // the shared resolver in lib/scoring.ts — the same function the PDF export
+  // uses — so the page, the PDF and the printed methodology can never disagree
+  // (a stale saved overall/grade is superseded by what the saved check data
+  // actually recompute to).
+  const display = resolveScanScores(s);
+  const overallScored = display.overallScored;
+  const shownScore = display.overall ?? s.score;
+  const grade = display.grade ?? "—";
+  const catScores: Record<string, number> = {
+    Performance: display.categories.Performance?.score ?? 0,
+    SEO: display.categories.SEO?.score ?? 0,
+    Security: display.categories.Security?.score ?? 0,
+    Accessibility: display.categories.Accessibility?.score ?? 0,
+    "Technical Health": display.categories["Technical Health"]?.score ?? 0,
   };
+  const savedChecks: Record<string, ChecksDoc | undefined> = {
+    Performance: s.performanceChecks,
+    SEO: s.seoChecks,
+    Security: s.securityChecks,
+    Accessibility: s.accessibilityChecks,
+    "Technical Health": s.technicalHealthChecks,
+  };
+  const emptyChecks: ChecksDoc = { score: 0, passed: 0, failed: 0, warnings: 0, notChecked: 0 };
+  const catChecks: Record<string, ChecksDoc> = Object.fromEntries(
+    categoryOrder.map((cat) => [cat, {
+      ...(savedChecks[cat] ?? emptyChecks),
+      hasScore: (display.categories[cat]?.score ?? null) !== null,
+    }]),
+  );
   const summary = s.summary;
   // Confirmed findings vs potential risks (older reports have no evidence trail)
   const confirmedFindings = s.issues.filter((i) => (i.confirmed ?? true) && i.status !== "unable-to-verify").length;
@@ -400,9 +420,9 @@ export default function Report() {
         <div className="mx-auto max-w-5xl px-4 py-8 sm:px-6">
           <div className="flex flex-col items-center gap-6 sm:flex-row sm:items-start">
             <div className="flex flex-col items-center">
-              <div className={`relative flex size-28 items-center justify-center border-[3px] border-[#1a1a1a] ${overallScored ? gradeColors[grade] : "bg-gray-200"}`}><span className="text-5xl font-black text-[#1a1a1a]">{overallScored ? s.score : "—"}</span></div>
+              <div className={`relative flex size-28 items-center justify-center border-[3px] border-[#1a1a1a] ${overallScored ? gradeColors[grade] : "bg-gray-200"}`}><span className="text-5xl font-black text-[#1a1a1a]">{overallScored ? shownScore : "—"}</span></div>
               <div className="mt-2 border-2 border-[#1a1a1a] bg-[#1a1a1a] px-4 py-1 text-sm font-black text-white">{overallScored ? `Grade ${grade}` : "Insufficient data"}</div>
-              <ScoreTrend key={s.scannedAt} scan={s} />
+              <ScoreTrend key={s.scannedAt} scan={{ score: shownScore, scannedAt: s.scannedAt, url: s.url }} />
             </div>
             <div className="flex-1 text-center sm:text-left">
               <h1 className="text-2xl font-black sm:text-3xl">Website Health Report</h1>
@@ -455,12 +475,12 @@ export default function Report() {
           <p className="mb-4 text-xs text-[#1a1a1a]/50">Every check has exactly one of five states. Only Pass/Fail/Warning are counted as “checked” — Unable to Verify and Not Applicable never count as failures.</p>
           <div className="grid grid-cols-2 gap-0 border-2 border-[#1a1a1a] sm:grid-cols-3">
             {[
-              { label: "Checks Run", value: String(s.totalChecksCompleted ?? 0), icon: BarChart3, color: "text-[#1a1a1a]" },
-              { label: "Passed", value: String(s.totalPassed ?? 0), icon: CheckCircle, color: "text-emerald-600" },
-              { label: "Failed", value: String(s.totalFailed ?? 0), icon: XCircle, color: "text-red-600", targetId: criticalIssues.length > 0 ? "fix-these-first" : warningIssues.length > 0 || recommendedIssues.length > 0 ? "fix-recommendations" : undefined, targetLabel: "failed issues" },
-              { label: "Warnings", value: String(s.totalWarnings ?? 0), icon: AlertTriangle, color: "text-amber-600", targetId: warningIssues.length > 0 || recommendedIssues.length > 0 ? "fix-recommendations" : undefined, targetLabel: "warning issues" },
-              { label: "Unable to Verify", value: String(s.totalUnverified ?? s.summary?.counts.unverified ?? 0), icon: Eye, color: "text-[#1a1a1a]/55" },
-              { label: "Not Applicable", value: String(s.totalNotApplicable ?? s.summary?.counts.notApplicable ?? 0), icon: Minus, color: "text-[#1a1a1a]/40" },
+              { label: "Checks Run", value: String(summary ? summary.counts.passed + summary.counts.failed + summary.counts.warnings : s.totalChecksCompleted ?? 0), icon: BarChart3, color: "text-[#1a1a1a]" },
+              { label: "Passed", value: String(summary?.counts.passed ?? s.totalPassed ?? 0), icon: CheckCircle, color: "text-emerald-600" },
+              { label: "Failed", value: String(summary?.counts.failed ?? s.totalFailed ?? 0), icon: XCircle, color: "text-red-600", targetId: criticalIssues.length > 0 ? "fix-these-first" : warningIssues.length > 0 || recommendedIssues.length > 0 ? "fix-recommendations" : undefined, targetLabel: "failed issues" },
+              { label: "Warnings", value: String(summary?.counts.warnings ?? s.totalWarnings ?? 0), icon: AlertTriangle, color: "text-amber-600", targetId: warningIssues.length > 0 || recommendedIssues.length > 0 ? "fix-recommendations" : undefined, targetLabel: "warning issues" },
+              { label: "Unable to Verify", value: String(summary?.counts.unverified ?? s.totalUnverified ?? 0), icon: Eye, color: "text-[#1a1a1a]/55" },
+              { label: "Not Applicable", value: String(summary?.counts.notApplicable ?? s.totalNotApplicable ?? 0), icon: Minus, color: "text-[#1a1a1a]/40" },
             ].map((stat, i) => {
               const canNavigate = "targetId" in stat && stat.targetId && Number(stat.value) > 0;
               const border = i % 3 !== 2 ? "sm:border-r-2" : "";
@@ -877,17 +897,17 @@ export default function Report() {
         <AIAssistant
         scan={{
           url: s.url,
-          score: s.score,
-          grade: s.grade || scoreToGrade(s.score),
-          performanceScore: s.performanceScore ?? 0,
-          seoScore: s.seoScore ?? 0,
-          securityScore: s.securityScore ?? 0,
-          accessibilityScore: s.accessibilityScore ?? 0,
-          technicalHealthScore: s.technicalHealthScore ?? 0,
+          score: shownScore,
+          grade: display.grade ?? scoreToGrade(shownScore),
+          performanceScore: catScores.Performance,
+          seoScore: catScores.SEO,
+          securityScore: catScores.Security,
+          accessibilityScore: catScores.Accessibility,
+          technicalHealthScore: catScores["Technical Health"],
           issues: s.issues,
-          totalPassed: s.totalPassed ?? 0,
-          totalFailed: s.totalFailed ?? 0,
-          totalWarnings: s.totalWarnings ?? 0,
+          totalPassed: summary?.counts.passed ?? s.totalPassed ?? 0,
+          totalFailed: summary?.counts.failed ?? s.totalFailed ?? 0,
+          totalWarnings: summary?.counts.warnings ?? s.totalWarnings ?? 0,
           https: s.https,
           status: s.status,
           responseTime: s.responseTime,

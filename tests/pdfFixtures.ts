@@ -54,20 +54,24 @@ function base(over: Partial<PdfScanInput> = {}): PdfScanInput {
     redirectChain: [],
     responseTime: 341,
     pageSizeFormatted: "48.2 KB",
-    score: 78,
+    // Saved scores are self-consistent with the saved check counts below via
+    // the documented formula (e.g. Performance: (4 + 0.5×1) ÷ 6 → 75), and the
+    // saved overall 74 is exactly Security 67×.30 + Performance 75×.25 +
+    // SEO 72×.25 + Technical Health 75×.10 + Accessibility 92×.10.
+    score: 74,
     grade: "C",
     riskLevel: "medium",
     betterThanPercent: 62,
-    performanceScore: 84,
-    seoScore: 76,
-    securityScore: 71,
-    accessibilityScore: 90,
-    technicalHealthScore: 88,
-    performanceChecks: { score: 84, passed: 4, failed: 1, warnings: 1, notChecked: 0, applicable: 6, unverified: 0, notApplicable: 0, hasScore: true, formula: "score = round(100 × (4 + 0.5×1) ÷ 6)", factors: ["Response time 341ms"] },
-    seoChecks: { score: 76, passed: 6, failed: 2, warnings: 1, notChecked: 1, applicable: 9, unverified: 1, notApplicable: 0, hasScore: true },
-    securityChecks: { score: 71, passed: 5, failed: 2, warnings: 2, notChecked: 1, applicable: 9, unverified: 1, notApplicable: 0, hasScore: true, factors: ["Missing Content-Security-Policy", "HSTS present"] },
-    accessibilityChecks: { score: 90, passed: 5, failed: 0, warnings: 1, notChecked: 0, applicable: 6, unverified: 0, notApplicable: 0, hasScore: true },
-    technicalHealthChecks: { score: 88, passed: 3, failed: 1, warnings: 0, notChecked: 0, applicable: 4, unverified: 0, notApplicable: 0, hasScore: true },
+    performanceScore: 75,
+    seoScore: 72,
+    securityScore: 67,
+    accessibilityScore: 92,
+    technicalHealthScore: 75,
+    performanceChecks: { score: 75, passed: 4, failed: 1, warnings: 1, notChecked: 0, applicable: 6, unverified: 0, notApplicable: 0, hasScore: true, formula: "score = round(100 × (4 + 0.5×1) ÷ 6)", factors: ["Response time 341ms"] },
+    seoChecks: { score: 72, passed: 6, failed: 2, warnings: 1, notChecked: 1, applicable: 9, unverified: 1, notApplicable: 0, hasScore: true },
+    securityChecks: { score: 67, passed: 5, failed: 2, warnings: 2, notChecked: 1, applicable: 9, unverified: 1, notApplicable: 0, hasScore: true, factors: ["Missing Content-Security-Policy", "HSTS present"] },
+    accessibilityChecks: { score: 92, passed: 5, failed: 0, warnings: 1, notChecked: 0, applicable: 6, unverified: 0, notApplicable: 0, hasScore: true },
+    technicalHealthChecks: { score: 75, passed: 3, failed: 1, warnings: 0, notChecked: 0, applicable: 4, unverified: 0, notApplicable: 0, hasScore: true },
     issues: [],
     quickWins: [
       { category: "SEO", message: "Add a meta description to the home page", potentialGain: 4, priority: "important" },
@@ -197,20 +201,33 @@ export function notFound404Scan(): PdfScanInput {
     url: "https://example.com/missing-page",
     finalUrl: "https://example.com/missing-page",
     status: 404,
+    // Partial scan: content-derived categories (SEO, accessibility) have no
+    // verified checks and are excluded; overall 41 = (50×.25 + 40×.30 + 20×.10)
+    // ÷ (.25 + .30 + .10) over the three remaining categories.
     score: 41,
     grade: "F",
     overallScored: true,
+    performanceScore: 50,
+    seoScore: 0,
+    securityScore: 40,
+    accessibilityScore: 0,
+    technicalHealthScore: 20,
+    performanceChecks: { score: 50, passed: 1, failed: 1, warnings: 0, notChecked: 1, unverified: 1, hasScore: true },
+    seoChecks: { score: 0, passed: 0, failed: 0, warnings: 0, notChecked: 12, unverified: 12, hasScore: false },
+    securityChecks: { score: 40, passed: 2, failed: 3, warnings: 0, notChecked: 1, unverified: 1, hasScore: true },
+    accessibilityChecks: { score: 0, passed: 0, failed: 0, warnings: 0, notChecked: 6, unverified: 6, hasScore: false },
+    technicalHealthChecks: { score: 20, passed: 1, failed: 4, warnings: 0, notChecked: 0, hasScore: true },
     summary: summary({
       completeness: "partial",
       requestedUrl: "https://example.com/missing-page",
       finalUrl: "https://example.com/missing-page",
       status: 404,
-      counts: { passed: 9, failed: 3, warnings: 2, notApplicable: 4, unverified: 12, total: 30 },
+      counts: { passed: 4, failed: 8, warnings: 0, notApplicable: 4, unverified: 20, total: 36 },
       limitations: [
         "The target returned HTTP 404: page-content checks (SEO, accessibility) are marked Unable to Verify.",
       ],
     }),
-    totalChecksCompleted: 30, totalPassed: 9, totalFailed: 3, totalWarnings: 2, totalUnverified: 12, totalNotApplicable: 4,
+    totalChecksCompleted: 12, totalPassed: 4, totalFailed: 8, totalWarnings: 0, totalUnverified: 20, totalNotApplicable: 4,
     issues: [
       finding({
         message: "Target returned HTTP 404 Not Found",
@@ -284,13 +301,20 @@ export function manyFindingsScan(n = 80): PdfScanInput {
   return base({ issues, topIssues: [], quickWins: [] });
 }
 
-/** Zero findings (a healthy scan). */
+/** Zero findings (a perfect scan: every saved check passed). */
 export function zeroFindingsScan(): PdfScanInput {
   return base({
-    score: 96,
+    score: 100,
     grade: "A",
     riskLevel: "low",
     betterThanPercent: 94,
+    performanceScore: 100, seoScore: 100, securityScore: 100,
+    accessibilityScore: 100, technicalHealthScore: 100,
+    performanceChecks: { score: 100, passed: 6, failed: 0, warnings: 0, notChecked: 0, applicable: 6, unverified: 0, notApplicable: 0, hasScore: true },
+    seoChecks: { score: 100, passed: 9, failed: 0, warnings: 0, notChecked: 0, applicable: 9, unverified: 0, notApplicable: 0, hasScore: true },
+    securityChecks: { score: 100, passed: 8, failed: 0, warnings: 0, notChecked: 0, applicable: 8, unverified: 0, notApplicable: 0, hasScore: true },
+    accessibilityChecks: { score: 100, passed: 6, failed: 0, warnings: 0, notChecked: 0, applicable: 6, unverified: 0, notApplicable: 0, hasScore: true },
+    technicalHealthChecks: { score: 100, passed: 5, failed: 0, warnings: 0, notChecked: 0, applicable: 5, unverified: 0, notApplicable: 0, hasScore: true },
     issues: [],
     topIssues: [],
     quickWins: [],
@@ -331,6 +355,36 @@ export function legacyScan(): PdfScanInput {
       },
     ],
     topIssues: undefined,
+  });
+}
+
+/**
+ * Regression fixture for the PDF/report score mismatch: the saved overall
+ * score and grade (67 / C) disagree with what the document's own saved check
+ * counts recompute to under the printed weights (64 / D). Both renderers must
+ * show the derived 64 and never the stale saved 67.
+ */
+export function staleOverallScan(): PdfScanInput {
+  return base({
+    score: 67,
+    grade: "C",
+    performanceScore: 67,
+    seoScore: 41,
+    securityScore: 79,
+    accessibilityScore: 67,
+    technicalHealthScore: 67,
+    performanceChecks: { score: 67, passed: 2, failed: 1, warnings: 0, notChecked: 0, unverified: 0, notApplicable: 0, hasScore: true },
+    seoChecks: { score: 41, passed: 7, failed: 10, warnings: 0, notChecked: 0, unverified: 0, notApplicable: 0, hasScore: true },
+    securityChecks: { score: 79, passed: 11, failed: 3, warnings: 0, notChecked: 0, unverified: 0, notApplicable: 0, hasScore: true },
+    accessibilityChecks: { score: 67, passed: 2, failed: 1, warnings: 0, notChecked: 0, unverified: 0, notApplicable: 0, hasScore: true },
+    technicalHealthChecks: { score: 67, passed: 2, failed: 1, warnings: 0, notChecked: 0, unverified: 0, notApplicable: 0, hasScore: true },
+    totalChecksCompleted: 37, totalPassed: 24, totalFailed: 16, totalWarnings: 0, totalUnverified: 0, totalNotApplicable: 0,
+    summary: summary({
+      counts: { passed: 24, failed: 16, warnings: 0, notApplicable: 0, unverified: 2, total: 42 },
+    }),
+    issues: [],
+    topIssues: [],
+    quickWins: [],
   });
 }
 

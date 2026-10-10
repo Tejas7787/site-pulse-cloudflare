@@ -54,7 +54,10 @@ describe("PDF export — normal scan", () => {
 
   test("renders overall and category scores with the existing methodology", () => {
     expect(pdf.norm).toContain("OVERALL HEALTH SCORE");
-    expect(pdf.norm).toContain("78/100");
+    // Derived from the saved category counts (see fixtures) — never a stale
+    // saved overall: 67×.30 + 75×.25 + 72×.25 + 75×.10 + 92×.10 → 74.
+    expect(pdf.norm).toContain("74/100");
+    expect(pdf.norm).not.toContain("78/100");
     expect(pdf.norm).toContain("GRADE C");
     expect(pdf.norm).toContain("MEDIUM RISK");
     expect(pdf.norm).toContain("Category Scores");
@@ -244,7 +247,7 @@ describe("PDF export — zero findings", () => {
     expect(pdf.norm).toContain("FAILED 0");
     expect(pdf.norm).toContain("0 CONFIRMED");
     expect(pdf.norm).toContain("0 POTENTIAL");
-    expect(pdf.norm).toContain("96/100");
+    expect(pdf.norm).toContain("100/100");
     expect(pdf.norm).toContain("GRADE A");
     expect(pdf.norm).toContain("cannot prove a website is completely secure");
     expect(pdf.text.split("\n").filter((l) => /^#\d+$/.test(l.trim())).length).toBe(0);
