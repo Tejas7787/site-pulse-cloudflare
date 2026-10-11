@@ -754,8 +754,12 @@ function composeCover(eng: Engine, scan: PdfScanInput, opts: PdfOptions, generat
   const scoreText = overallScored && display.overall !== null ? `${display.overall}/100` : "—";
   const chips: ChipSpec[] = [];
   if (overallScored && display.grade) chips.push({ text: `GRADE ${display.grade}`, bg: AMBER, fg: INK, border: INK });
-  if (scan.riskLevel) chips.push({ text: `${scan.riskLevel.toUpperCase()} RISK`, bg: WHITE, fg: INK, border: INK });
-  if (scan.betterThanPercent) chips.push({ text: `BETTER THAN ${scan.betterThanPercent}% OF SCANNED SITES`, bg: WHITE, fg: GRAY, border: LIGHT_GRAY });
+  // Risk and "better than" are derived from a score that this scan does not
+  // have (blocked / insufficiently verified) — claiming them would fabricate
+  // a verdict the evidence does not support, so they are shown only when an
+  // overall score actually exists (the report page gates them identically).
+  if (overallScored && scan.riskLevel) chips.push({ text: `${scan.riskLevel.toUpperCase()} RISK`, bg: WHITE, fg: INK, border: INK });
+  if (overallScored && scan.betterThanPercent) chips.push({ text: `BETTER THAN ${scan.betterThanPercent}% OF SCANNED SITES`, bg: WHITE, fg: GRAY, border: LIGHT_GRAY });
 
   runOps(eng, [
     ...mkText(eng, "OVERALL HEALTH SCORE", { size: 8, style: "bold", color: GRAY, keep: 42 }),

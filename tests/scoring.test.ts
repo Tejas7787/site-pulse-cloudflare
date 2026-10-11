@@ -157,3 +157,74 @@ describe("overallScore — weighted and renormalized", () => {
     expect(result.score).toBe(expected);
   });
 });
+
+describe("coverage floor — insufficiently verified categories never score", () => {
+  // Reported bug: a Cloudflare 403 challenge forced 27 checks to "Unable to
+  // Verify"; with those checks gone from the denominator, the only remaining
+  // passes (HTTPS + SSL certificate) computed to a perfect Security 100 —
+  // even though the site's real score had been 44.
+  const blockedSecurity: Record<string, CheckResult> = {
+    https: "pass",
+    "http-to-https-redirect": "na",
+    "header-csp": "not-checked",
+    "header-hsts": "not-checked",
+    "header-xcto": "not-checked",
+    "header-xfo": "not-checked",
+    "header-rp": "not-checked",
+    "header-pp": "not-checked",
+    "header-xpcdp": "not-checked",
+    "ssl-valid": "pass",
+    "cookie-flags": "not-checked",
+    "mixed-content": "not-checked",
+  };
+
+  test("the exact blocked-403 Security map scores nothing, never 100", () => {
+    const counts = tallyChecks(blockedSecurity);
+    expect(counts.passed).toBe(2);
+    expect(counts.applicable).toBe(2);
+    expect(counts.unverified).toBe(9);
+    expect(counts.notApplicable).toBe(1);
+    // The raw formula would compute 100 from the 2 remaining passes — the
+    // floor refuses it because most of the category could not be verified.
+    expect(scoreFromCounts(counts)).toBeNull();
+    const cat = scoreCategory(blockedSecurity);
+    expect(cat.hasScore).toBe(false);
+    expect(cat.score).toBe(0);
+    // Counts are still recorded so the report shows what was verified.
+    expect(cat.passed).toBe(2);
+    expect(cat.unverified).toBe(9);
+  });
+
+  test("the floor trips only when unverified exceeds verified", () => {
+    // 2 verified / 2 unverified — a tie still scores, so normal partial
+    // scans (truncated bodies, one unreachable sub-check) are unchanged.
+    expect(scoreFromCounts(tallyChecks({ a: "pass", b: "fail", u1: "not-checked", u2: "not-checked" }))).toBe(50);
+    // 1 verified / 2 unverified — the floor trips.
+    expect(scoreFromCounts(tallyChecks({ a: "pass", u1: "not-checked", u2: "not-checked" }))).toBeNull();
+    // Not Applicable is genuinely irrelevant to the target — it never counts
+    // against coverage.
+    expect(scoreFromCounts(tallyChecks({ a: "pass", n1: "na", n2: "na" }))).toBe(100);
+  });
+
+  test("complete scans are untouched by the floor", () => {
+    expect(scoreFromCounts(tallyChecks({ a: "pass", b: "fail", c: "warn" }))).toBe(
+      Math.round((100 * (1 + 0.5)) / 3),
+    );
+  });
+});
+
+describe("scoreCategory — blocked scans carry no score", () => {
+  test("even an all-pass map is unscored when the scan was blocked", () => {
+    const cat = scoreCategory({ https: "pass", "ssl-valid": "pass" }, { blocked: true });
+    expect(cat.hasScore).toBe(false);
+    expect(cat.score).toBe(0);
+    expect(cat.passed).toBe(2); // counts preserved for the report
+    expect(cat.factors).toBeDefined();
+  });
+
+  test("the same map scores normally when the scan was not blocked", () => {
+    const cat = scoreCategory({ https: "pass", "ssl-valid": "pass" });
+    expect(cat.hasScore).toBe(true);
+    expect(cat.score).toBe(100);
+  });
+});

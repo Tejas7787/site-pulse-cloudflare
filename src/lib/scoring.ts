@@ -21,11 +21,21 @@
 //            Accessibility .10. Categories without a score are dropped and the
 //            remaining weights are renormalized, so incomplete data can never
 //            drag a category to 0.
+//
+// NO-SCORE RULES (a category displays "—", never a fabricated number):
+//   • applicable === 0 — nothing was verifiable at all.
+//   • COVERAGE FLOOR: unverified > applicable — when most of a category could
+//     not be verified, the few remaining passes must never add up to a
+//     misleading 100 (a blocked scan leaves only transport checks such as
+//     HTTPS/SSL passing while every header/cookie/content check is excluded).
+//   • The scan was hard-blocked (bot challenge / access denied): the response
+//     came from the protection layer, not from the website, so no category of
+//     that scan may present a score. Counts and factors are still recorded.
 
 import type { CategoryScore, CheckResult } from "../types/scan";
 
 export const CATEGORY_SCORE_FORMULA =
-  "score = round(100 × (passed + 0.5 × warnings) ÷ applicable), where applicable = passed + failed + warnings; checks that are Unable to Verify or Not Applicable are excluded";
+  "score = round(100 × (passed + 0.5 × warnings) ÷ applicable), where applicable = passed + failed + warnings; checks that are Unable to Verify or Not Applicable are excluded; a category has no score when nothing was verifiable, when more checks are Unable to Verify than verified, or when the scan itself was blocked";
 
 export const OVERALL_WEIGHTS: Record<string, number> = {
   Security: 0.3,
@@ -74,9 +84,20 @@ export function tallyChecks(checks: Record<string, CheckResult>): CheckCounts {
   return counts;
 }
 
-/** Category score from counts, or null when nothing was verifiable. */
+/**
+ * Category score from counts, or null when the category must not display a
+ * score:
+ *  - nothing was verifiable (applicable === 0), or
+ *  - COVERAGE FLOOR: more checks are Unable to Verify than verified. Without
+ *    this floor, excluding the unverifiable checks from the denominator lets
+ *    the few remaining passes (HTTPS, SSL) add up to a perfect 100 on a
+ *    blocked scan — the reported 44 → 100 Security jump.
+ * Not Applicable checks are genuinely irrelevant to the target and do not
+ * count against coverage.
+ */
 export function scoreFromCounts(counts: CheckCounts): number | null {
   if (counts.applicable === 0) return null;
+  if (counts.unverified > counts.applicable) return null;
   return Math.round(
     (100 * (counts.passed + 0.5 * counts.warnings)) / counts.applicable,
   );
@@ -104,10 +125,24 @@ export function categoryFactors(checks: Record<string, CheckResult>): string[] {
     .map(([label, keys]) => `${label}: ${keys.join(", ")}`);
 }
 
+export interface ScoreCategoryOptions {
+  /**
+   * True when the scan was hard-blocked (bot challenge / access denied /
+   * rate limit). The response then comes from the protection layer rather
+   * than from the website, so no category of that scan may present a score —
+   * counts and factors are still recorded so the report can show exactly
+   * what was and was not verified.
+   */
+  blocked?: boolean;
+}
+
 /** Build the stored CategoryScore (counts + score + formula + factors). */
-export function scoreCategory(checks: Record<string, CheckResult>): CategoryScore {
+export function scoreCategory(
+  checks: Record<string, CheckResult>,
+  options: ScoreCategoryOptions = {},
+): CategoryScore {
   const counts = tallyChecks(checks);
-  const score = scoreFromCounts(counts);
+  const score = options.blocked ? null : scoreFromCounts(counts);
   return {
     score: score ?? 0,
     passed: counts.passed,
@@ -181,7 +216,7 @@ export interface StoredScanScores {
   securityChecks?: StoredCategoryChecks;
   accessibilityChecks?: StoredCategoryChecks;
   technicalHealthChecks?: StoredCategoryChecks;
-  summary?: { overallScored?: boolean } | null;
+  summary?: { overallScored?: boolean; blocked?: boolean } | null;
 }
 
 export interface ResolvedCategoryScore {
@@ -225,7 +260,16 @@ function categoryInputs(scan: StoredScanScores) {
  *   and Not Applicable are excluded). The saved `hasScore` flag wins when
  *   present; docs saved before the flag use applicable > 0.
  * - A category WITHOUT a checks document (very old docs) keeps its saved
- *   category score — there is nothing to honestly re-derive from.
+ *   category score — there is nothing to honestly re-derive from — unless the
+ *   scan was blocked, when nothing about the website was observed.
+ * - A BLOCKED scan (summary.blocked — bot challenge, access denied, rate
+ *   limit) resolves every category to null and the overall to null: the
+ *   response came from the protection layer, not the website. This also
+ *   supersedes documents saved by older code that scored the few remaining
+ *   passing checks (e.g. Security 100 after a Cloudflare 403).
+ * - The coverage floor lives inside `scoreFromCounts`: a stale saved
+ *   `score`/`hasScore` can never resurrect a score that the saved counts no
+ *   longer justify (more Unable to Verify than verified ⇒ no score).
  * - The overall score is recomputed with `overallScore()` whenever ANY
  *   category is checks-derived, so it always matches the category data and the
  *   printed weights. Only documents with no saved check data at all keep their
@@ -234,13 +278,14 @@ function categoryInputs(scan: StoredScanScores) {
  *   grade string is never trusted over the score it describes.
  */
 export function resolveScanScores(scan: StoredScanScores): ResolvedScanScores {
+  const blocked = scan.summary?.blocked === true;
   const categories: Record<string, ResolvedCategoryScore | null> = {};
   let anyChecksDerived = false;
 
   for (const { name, score: storedScore, checks } of categoryInputs(scan)) {
     if (!checks) {
       categories[name] =
-        storedScore === undefined
+        blocked || storedScore === undefined
           ? null
           : {
               score: storedScore,
@@ -259,10 +304,11 @@ export function resolveScanScores(scan: StoredScanScores): ResolvedScanScores {
       applicable: passed + failed + warnings,
       total: passed + failed + warnings + notApplicable + unverified,
     };
-    const hasScore = (checks.hasScore ?? true) && counts.applicable > 0;
-    const score = hasScore
-      ? scoreFromCounts(counts) ?? checks.score ?? storedScore ?? null
-      : null;
+    // Blocked ⇒ never scoreable; otherwise the saved flag and the coverage
+    // floor inside scoreFromCounts decide. The saved `score` is deliberately
+    // NOT used as a fallback: it is exactly what the floor must override.
+    const hasScore = !blocked && (checks.hasScore ?? true) && counts.applicable > 0;
+    const score = hasScore ? scoreFromCounts(counts) : null;
     categories[name] = { score, passed, failed, warnings, unverified, notApplicable };
   }
 
@@ -280,7 +326,11 @@ export function resolveScanScores(scan: StoredScanScores): ResolvedScanScores {
     };
   }
 
-  // No saved check data at all — render the saved overall exactly as stored.
+  // No saved check data at all. A blocked scan still has nothing to honestly
+  // display, so it stays unscored even here.
+  if (blocked) {
+    return { categories, overall: null, grade: null, overallScored: false };
+  }
   const savedScored = scan.overallScored ?? scan.summary?.overallScored ?? scan.score !== undefined;
   return {
     categories,

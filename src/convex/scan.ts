@@ -1274,11 +1274,17 @@ export const scanWebsite = action({
     // where applicable = passed + failed + warnings. "Unable to Verify" and
     // "Not Applicable" checks are excluded entirely — incomplete data can
     // never drag a category to 0/100 (hasScore=false ⇒ display "—").
-    const perfCatScore = scoreCategory(performanceChecks);
-    const seoCatScore = scoreCategory(seoChecks);
-    const secCatScore = scoreCategory(securityChecks);
-    const a11yCatScore = scoreCategory(accessibilityChecks);
-    const techCatScore = scoreCategory(technicalHealthChecks);
+    // A HARD-BLOCKED scan (bot challenge / access denied / rate limit) gets NO
+    // category scores at all: its response came from the protection layer, not
+    // from the website, so a handful of still-passing transport checks (HTTPS,
+    // SSL) must never be presented as a perfect Security score. Counts and
+    // factors are still saved so the report shows exactly what was verified.
+    const catOpts = { blocked: hardBlock } as const;
+    const perfCatScore = scoreCategory(performanceChecks, catOpts);
+    const seoCatScore = scoreCategory(seoChecks, catOpts);
+    const secCatScore = scoreCategory(securityChecks, catOpts);
+    const a11yCatScore = scoreCategory(accessibilityChecks, catOpts);
+    const techCatScore = scoreCategory(technicalHealthChecks, catOpts);
 
     const perfScore = perfCatScore.score;
     const seoScore = seoCatScore.score;

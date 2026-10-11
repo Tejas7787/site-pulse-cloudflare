@@ -23,6 +23,12 @@ export interface ScanHistoryEntry {
   technicalHealthScore: number;
   /** Epoch ms when the scan completed */
   scannedAt: number;
+  /**
+   * False when the scan produced no overall score (blocked or too few
+   * verified checks) — the card must then show "—" instead of the stored 0.
+   * Optional: entries saved before this field existed keep their stored score.
+   */
+  overallScored?: boolean;
 }
 
 const STORAGE_KEY = "sitepulse_scan_history";

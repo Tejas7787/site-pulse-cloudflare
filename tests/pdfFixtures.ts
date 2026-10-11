@@ -148,7 +148,13 @@ export function normalScan(): PdfScanInput {
   });
 }
 
-/** Blocked scan: HTTP 429, everything content-derived is Unable to Verify. */
+/**
+ * Blocked scan: HTTP 429. Mirrors the scanner's real hard-block output (the
+ * same gating as the live Cloudflare 403 case): the block gate forces exactly
+ * 27 checks to "Unable to Verify", the only checks still evaluated are
+ * fetch/TLS-level facts, and because the scan was blocked NO category has a
+ * score — never a passing remnant like Security 100.
+ */
 export function blocked429Scan(): PdfScanInput {
   return base({
     url: "https://rate-limited.example.org/",
@@ -159,23 +165,24 @@ export function blocked429Scan(): PdfScanInput {
     riskLevel: undefined,
     betterThanPercent: undefined,
     performanceScore: 0, seoScore: 0, securityScore: 0, accessibilityScore: 0, technicalHealthScore: 0,
-    performanceChecks: { score: 0, passed: 0, failed: 0, warnings: 0, notChecked: 3, hasScore: false },
-    seoChecks: { score: 0, passed: 0, failed: 0, warnings: 0, notChecked: 9, hasScore: false },
-    securityChecks: { score: 0, passed: 0, failed: 0, warnings: 0, notChecked: 8, hasScore: false },
-    accessibilityChecks: { score: 0, passed: 0, failed: 0, warnings: 0, notChecked: 6, hasScore: false },
-    technicalHealthChecks: { score: 0, passed: 0, failed: 0, warnings: 0, notChecked: 4, hasScore: false },
+    performanceChecks: { score: 0, passed: 2, failed: 1, warnings: 0, notChecked: 3, unverified: 3, notApplicable: 0, applicable: 3, hasScore: false },
+    seoChecks: { score: 0, passed: 0, failed: 0, warnings: 0, notChecked: 8, unverified: 8, notApplicable: 0, applicable: 0, hasScore: false },
+    securityChecks: { score: 0, passed: 2, failed: 0, warnings: 0, notChecked: 10, unverified: 9, notApplicable: 1, applicable: 2, hasScore: false },
+    accessibilityChecks: { score: 0, passed: 0, failed: 0, warnings: 0, notChecked: 3, unverified: 3, notApplicable: 0, applicable: 0, hasScore: false },
+    technicalHealthChecks: { score: 0, passed: 2, failed: 1, warnings: 0, notChecked: 4, unverified: 4, notApplicable: 0, applicable: 3, hasScore: false },
     quickWins: [],
-    totalChecksCompleted: 30, totalPassed: 0, totalFailed: 0, totalWarnings: 0, totalUnverified: 30, totalNotApplicable: 0,
+    totalChecksCompleted: 8, totalPassed: 6, totalFailed: 2, totalWarnings: 0, totalUnverified: 27, totalNotApplicable: 1,
     overallScored: false,
     summary: summary({
       completeness: "blocked",
       blocked: true,
+      overallScored: false,
       blockReason: "HTTP 429 Too Many Requests — the target rate-limited the scan request.",
       requestedUrl: "https://rate-limited.example.org/",
       finalUrl: "https://rate-limited.example.org/",
       status: 429,
       contentType: "text/html",
-      counts: { passed: 0, failed: 0, warnings: 0, notApplicable: 0, unverified: 30, total: 30 },
+      counts: { passed: 6, failed: 2, warnings: 0, notApplicable: 1, unverified: 27, total: 36 },
       limitations: [
         "The scan was blocked (HTTP 429): content, header and cookie checks could not be verified.",
         "No browser engine was available for this scan.",
@@ -189,6 +196,72 @@ export function blocked429Scan(): PdfScanInput {
         evidence: "HTTP 429 Too Many Requests returned for the scan request.",
         evidenceUrl: "https://rate-limited.example.org/", method: "http", stage: "fetch", checkKey: "headers-present", detectedAt: SCANNED_AT, confirmed: false, status: "unable-to-verify",
         howToFix: "",
+      }),
+    ],
+    topIssues: [],
+  });
+}
+
+/**
+ * The reported tester case: a Cloudflare 403 challenge. The block gate marked
+ * 27 checks Unable to Verify, and this document was saved by the code BEFORE
+ * the scoring fix — which excluded those checks from the formula and scored
+ * the only remaining passes (HTTPS + SSL certificate) as Security 100, the
+ * reported 44 → 100 jump, with an inflated overall 82/B on top. Both
+ * renderers must resolve every category AND the overall to "—" for this
+ * document regardless of what it claims.
+ */
+export function cloudflare403Scan(): PdfScanInput {
+  return base({
+    url: "https://protected.example.co.uk/",
+    finalUrl: "https://protected.example.co.uk/",
+    status: 403,
+    score: 82,
+    grade: "B",
+    riskLevel: "low",
+    betterThanPercent: 74,
+    performanceScore: 67,
+    seoScore: 0,
+    securityScore: 100, // ← the reported fabricated score
+    accessibilityScore: 0,
+    technicalHealthScore: 67,
+    performanceChecks: { score: 67, passed: 2, failed: 1, warnings: 0, notChecked: 3, unverified: 3, notApplicable: 0, applicable: 3, hasScore: true },
+    seoChecks: { score: 0, passed: 0, failed: 0, warnings: 0, notChecked: 8, unverified: 8, notApplicable: 0, applicable: 0, hasScore: false },
+    securityChecks: { score: 100, passed: 2, failed: 0, warnings: 0, notChecked: 10, unverified: 9, notApplicable: 1, applicable: 2, hasScore: true },
+    accessibilityChecks: { score: 0, passed: 0, failed: 0, warnings: 0, notChecked: 3, unverified: 3, notApplicable: 0, applicable: 0, hasScore: false },
+    technicalHealthChecks: { score: 67, passed: 2, failed: 1, warnings: 0, notChecked: 4, unverified: 4, notApplicable: 0, applicable: 3, hasScore: true },
+    quickWins: [],
+    totalChecksCompleted: 8, totalPassed: 6, totalFailed: 2, totalWarnings: 0, totalUnverified: 27, totalNotApplicable: 1,
+    overallScored: true, // stale claim saved by the old code — superseded by the resolver
+    summary: summary({
+      completeness: "blocked",
+      blocked: true,
+      overallScored: true, // …as the old code saved it
+      blockReason: "The site refused the request (bot protection or access rules). HTTP 403, Server: cloudflare, cf-ray: 7f3a9c21b4e08f21.",
+      requestedUrl: "https://protected.example.co.uk/",
+      finalUrl: "https://protected.example.co.uk/",
+      status: 403,
+      contentType: "text/html; charset=UTF-8",
+      counts: { passed: 6, failed: 2, warnings: 0, notApplicable: 1, unverified: 27, total: 36 },
+      limitations: [
+        "The scan was blocked: The site refused the request (bot protection or access rules). Evidence: HTTP 403, Server: cloudflare, cf-ray: 7f3a9c21b4e08f21. Checks that depend on the page content or on the application's own response headers were marked \"Unable to Verify\" and are NOT reported as failures.",
+        "No browser engine was available: JavaScript-rendered DOM checks and lab metrics were not performed.",
+      ],
+    }),
+    issues: [
+      finding({
+        message: "Scan blocked — header checks could not be verified",
+        category: "Security", severity: "info", priority: "recommended",
+        whyItMatters: "A blocked scan produces no evidence; nothing here is a confirmed failure.",
+        evidence: "HTTP 403 returned for the scan request (Server: cloudflare, cf-ray: 7f3a9c21b4e08f21).",
+        evidenceUrl: "https://protected.example.co.uk/", method: "http", stage: "fetch", checkKey: "headers-present", detectedAt: SCANNED_AT, confirmed: false, status: "unable-to-verify",
+        howToFix: "",
+      }),
+      finding({
+        message: "Server returned HTTP 403.",
+        category: "Technical Health", severity: "critical", priority: "critical",
+        evidence: "GET https://protected.example.co.uk/ returned HTTP 403.",
+        evidenceUrl: "https://protected.example.co.uk/", method: "http", stage: "fetch", checkKey: "http-status", detectedAt: SCANNED_AT, confirmed: true, status: "fail",
       }),
     ],
     topIssues: [],

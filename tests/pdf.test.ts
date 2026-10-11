@@ -136,9 +136,12 @@ describe("PDF export — blocked 429 scan", () => {
     expect(pdf.norm).toContain("HTTP 429 Too Many Requests \u2014 the target rate-limited the scan request.");
     expect(pdf.norm).toContain("HTTP 429");
     expect(pdf.norm).toContain("SCAN COMPLETENESS Blocked");
-    expect(pdf.norm).toContain("PASSED 0");
-    expect(pdf.norm).toContain("FAILED 0");
-    expect(pdf.norm).toContain("UNABLE TO VERIFY 30");
+    // Realistic hard-block counts: the fetch/TLS-level checks that still ran
+    // (6 passes, 2 observed HTTP-status failures)…
+    expect(pdf.norm).toContain("PASSED 6");
+    expect(pdf.norm).toContain("FAILED 2");
+    // …while the block gate marked exactly 27 checks Unable to Verify.
+    expect(pdf.norm).toContain("UNABLE TO VERIFY 27");
     expect(pdf.norm).toContain("UNABLE TO VERIFY"); // per-finding trust chip
     expect(pdf.norm).toContain("Scan blocked \u2014 header checks could not be verified");
     expect(pdf.norm).toContain("are reported as Unable to Verify \u2014 never as failures");

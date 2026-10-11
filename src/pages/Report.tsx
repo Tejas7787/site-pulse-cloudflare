@@ -332,6 +332,12 @@ export default function Report() {
     }]),
   );
   const summary = s.summary;
+  // Page metadata (and the page-size pill below) may only be presented when
+  // the final response was actually the site's own complete HTML page — never
+  // for a bot challenge, a non-HTML body, a truncated body or an error page.
+  const contentUsable = summary
+    ? !summary.blocked && !summary.notHtml && !summary.incomplete && summary.status >= 200 && summary.status < 400
+    : true; // legacy doc without evidence tracking: keep the stored value
   // Confirmed findings vs potential risks (older reports have no evidence trail)
   const confirmedFindings = s.issues.filter((i) => (i.confirmed ?? true) && i.status !== "unable-to-verify").length;
   const potentialFindings = s.issues.length - confirmedFindings;
@@ -422,7 +428,7 @@ export default function Report() {
             <div className="flex flex-col items-center">
               <div className={`relative flex size-28 items-center justify-center border-[3px] border-[#1a1a1a] ${overallScored ? gradeColors[grade] : "bg-gray-200"}`}><span className="text-5xl font-black text-[#1a1a1a]">{overallScored ? shownScore : "—"}</span></div>
               <div className="mt-2 border-2 border-[#1a1a1a] bg-[#1a1a1a] px-4 py-1 text-sm font-black text-white">{overallScored ? `Grade ${grade}` : "Insufficient data"}</div>
-              <ScoreTrend key={s.scannedAt} scan={{ score: shownScore, scannedAt: s.scannedAt, url: s.url }} />
+              {overallScored && <ScoreTrend key={s.scannedAt} scan={{ score: shownScore, scannedAt: s.scannedAt, url: s.url }} />}
             </div>
             <div className="flex-1 text-center sm:text-left">
               <h1 className="text-2xl font-black sm:text-3xl">Website Health Report</h1>
@@ -431,19 +437,19 @@ export default function Report() {
               {/* Trust signals row */}
               <div className="mt-3 flex flex-wrap items-center gap-2 justify-center sm:justify-start">
                 <span className="inline-flex items-center gap-1.5 border-2 border-[#1a1a1a] bg-emerald-100 px-2.5 py-1 text-[11px] font-bold text-emerald-700"><BadgeCheck className="size-3.5" />Verified Scan</span>
-                {s.riskLevel && (
+                {overallScored && s.riskLevel && (
                   <span className={`inline-flex items-center gap-1.5 border-2 border-[#1a1a1a] ${riskConfig[s.riskLevel].bg} px-2.5 py-1 text-[11px] font-bold ${riskConfig[s.riskLevel].color}`}>
                     {s.riskLevel === "low" ? <Shield className="size-3.5" /> : <ShieldAlert className="size-3.5" />}{riskConfig[s.riskLevel].label}
                   </span>
                 )}
-                {s.betterThanPercent && <span className="inline-flex items-center gap-1.5 border-2 border-[#1a1a1a] bg-[#DBEAFE] px-2.5 py-1 text-[11px] font-bold text-blue-700">Better than {s.betterThanPercent}% of scanned sites</span>}
+                {overallScored && s.betterThanPercent && <span className="inline-flex items-center gap-1.5 border-2 border-[#1a1a1a] bg-[#DBEAFE] px-2.5 py-1 text-[11px] font-bold text-blue-700">Better than {s.betterThanPercent}% of scanned sites</span>}
                 <span className="inline-flex items-center gap-1.5 border-2 border-[#1a1a1a] bg-[#FFFBF0] px-2.5 py-1 text-[11px] font-bold text-[#1a1a1a]/50">Scan #{id?.slice(-6) || "—"}</span>
               </div>
               <div className="mt-4 flex flex-wrap gap-2 justify-center sm:justify-start">
                 <StatusPill ok={s.status >= 200 && s.status < 400} label={`HTTP ${s.status}`} />
                 <StatusPill ok={s.https} label={s.https ? "HTTPS" : "No HTTPS"} />
                 <StatusPill ok={s.responseTime < 2000} label={`${s.responseTime}ms`} />
-                <StatusPill ok={true} label={s.pageSizeFormatted} />
+                {contentUsable && <StatusPill ok={true} label={s.pageSizeFormatted} />}
                 {s.redirects > 0 && <StatusPill ok={s.redirects < 3} label={`${s.redirects} redirect${s.redirects > 1 ? "s" : ""}`} />}
               </div>
             </div>

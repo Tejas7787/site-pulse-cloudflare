@@ -122,6 +122,16 @@ interface ScanResult {
   totalFailed: number;
   totalWarnings: number;
   scannedAt: number;
+  /** Evidence-tracking summary saved with the scan (absent on very old docs). */
+  summary?: {
+    completeness?: "complete" | "partial" | "blocked";
+    blocked?: boolean;
+    notHtml?: boolean;
+    incomplete?: boolean;
+    status?: number;
+    overallScored?: boolean;
+    blockReason?: string;
+  } | null;
 }
 
 const gradeColors: Record<string, string> = {
@@ -197,6 +207,9 @@ export default function Landing() {
           accessibilityScore: scanResult.accessibilityScore,
           technicalHealthScore: scanResult.technicalHealthScore,
           scannedAt: scanResult.scannedAt,
+          // Blocked / too-incomplete scans have no verified overall score —
+          // remember that so the history card shows "—" instead of a 0.
+          overallScored: scanResult.summary ? scanResult.summary.overallScored !== false : true,
         };
         addScanToHistory(historyEntry);
         setHistory(getScanHistory());
@@ -222,6 +235,20 @@ export default function Landing() {
   const sortedCategories = Object.keys(issuesByCategory).sort(
     (a, b) => categoryOrder.indexOf(a) === -1 ? 1 : categoryOrder.indexOf(b) === -1 ? -1 : categoryOrder.indexOf(a) - categoryOrder.indexOf(b),
   );
+
+  // ── Evidence gates ───────────────────────────────────────────────────────
+  // Page-derived metadata, the page-size pill, the score/grade and the risk
+  // claim may only be shown when the scan actually observed the site's own
+  // complete HTML page. A blocked scan (bot challenge / access denied), a
+  // non-HTML or truncated body, or an error status means none of that data
+  // belongs to the website — the sections below then say so instead of
+  // presenting the challenge page as the site.
+  const scanSummary = result?.summary;
+  const scanBlocked = scanSummary?.blocked === true;
+  const contentUsable = result
+    ? !scanBlocked && !scanSummary?.notHtml && !scanSummary?.incomplete && result.status >= 200 && result.status < 400
+    : false;
+  const overallScored = scanSummary ? scanSummary.overallScored !== false : true;
 
   return (
     <div className="min-h-screen bg-[#FFFBF0] text-[#1a1a1a]">
@@ -286,28 +313,37 @@ export default function Landing() {
             </div>
             <div className="space-y-0">
               {history.map((entry) => {
-                const gradeBg = entry.grade === "A" ? "bg-emerald-400" : entry.grade === "B" ? "bg-lime-400" : entry.grade === "C" ? "bg-yellow-400" : entry.grade === "D" ? "bg-orange-400" : "bg-red-400";
+                // A blocked / unscored scan stored no verified score — show a
+                // dash, never the stored 0 or the category zeros.
+                const unscored = entry.overallScored === false;
+                const gradeBg = unscored ? "bg-gray-200" : entry.grade === "A" ? "bg-emerald-400" : entry.grade === "B" ? "bg-lime-400" : entry.grade === "C" ? "bg-yellow-400" : entry.grade === "D" ? "bg-orange-400" : "bg-red-400";
                 return (
                   <button
                     key={entry.scanId}
                     onClick={() => navigate(`/report/${entry.scanId}`)}
                     className="group flex w-full items-center gap-4 border-2 border-[#1a1a1a] border-b-0 bg-[#FFFBF0] px-4 py-3 text-left transition-colors last:border-b-2 hover:bg-[#FDE68A]/30 sm:px-6"
-                    aria-label={`View report for ${domainFromUrl(entry.url)}, score ${entry.score}${entry.grade}`}
+                    aria-label={`View report for ${domainFromUrl(entry.url)}, ${unscored ? "no verified score" : `score ${entry.score}${entry.grade}`}`}
                   >
                     <div className={`flex size-12 shrink-0 items-center justify-center border-2 border-[#1a1a1a] ${gradeBg}`} aria-hidden="true">
-                      <span className="text-xl font-black text-[#1a1a1a]">{entry.score}</span>
+                      <span className="text-xl font-black text-[#1a1a1a]">{unscored ? "—" : entry.score}</span>
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
                         <span className="truncate text-sm font-bold text-[#1a1a1a]">{domainFromUrl(entry.url)}</span>
-                        <span className="shrink-0 border-2 border-[#1a1a1a] bg-[#1a1a1a] px-2 py-0.5 text-[10px] font-black text-white">{entry.grade}</span>
+                        <span className="shrink-0 border-2 border-[#1a1a1a] bg-[#1a1a1a] px-2 py-0.5 text-[10px] font-black text-white">{unscored ? "—" : entry.grade}</span>
                       </div>
                       <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[10px] font-medium text-[#1a1a1a]/50">
-                        <span>Perf {entry.performanceScore}</span>
-                        <span>SEO {entry.seoScore}</span>
-                        <span>Sec {entry.securityScore}</span>
-                        <span>A11y {entry.accessibilityScore}</span>
-                        <span>Tech {entry.technicalHealthScore}</span>
+                        {unscored ? (
+                          <span>Scan blocked — no verified scores</span>
+                        ) : (
+                          <>
+                            <span>Perf {entry.performanceScore}</span>
+                            <span>SEO {entry.seoScore}</span>
+                            <span>Sec {entry.securityScore}</span>
+                            <span>A11y {entry.accessibilityScore}</span>
+                            <span>Tech {entry.technicalHealthScore}</span>
+                          </>
+                        )}
                       </div>
                     </div>
                     <div className="shrink-0 text-right">
@@ -370,15 +406,15 @@ export default function Landing() {
               <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
                 <div className="flex flex-col items-center gap-6 sm:flex-row sm:items-start">
                   <div className="flex flex-col items-center">
-                    <div className={`relative flex size-28 items-center justify-center border-[3px] border-[#1a1a1a] ${gradeColors[result.grade] || "bg-gray-300"}`}><span className="text-5xl font-black text-[#1a1a1a]">{result.score}</span></div>
-                    <div className="mt-2 border-2 border-[#1a1a1a] bg-[#1a1a1a] px-4 py-1 text-sm font-black text-white">Grade {result.grade}</div>
+                    <div className={`relative flex size-28 items-center justify-center border-[3px] border-[#1a1a1a] ${overallScored ? gradeColors[result.grade] || "bg-gray-300" : "bg-gray-200"}`}><span className="text-5xl font-black text-[#1a1a1a]">{overallScored ? result.score : "—"}</span></div>
+                    <div className="mt-2 border-2 border-[#1a1a1a] bg-[#1a1a1a] px-4 py-1 text-sm font-black text-white">{overallScored ? `Grade ${result.grade}` : "Insufficient data"}</div>
                     {/* Trust indicators */}
                     <div className="mt-2 flex items-center gap-2">
                       <span className="inline-flex items-center gap-1 border-2 border-[#1a1a1a] bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-700">✓ Verified Scan</span>
-                      <span className={`inline-flex items-center gap-1 border-2 border-[#1a1a1a] px-2 py-0.5 text-[10px] font-bold ${result.riskLevel === "low" ? "bg-emerald-100 text-emerald-700" : result.riskLevel === "medium" ? "bg-yellow-100 text-yellow-700" : result.riskLevel === "high" ? "bg-orange-100 text-orange-700" : "bg-red-100 text-red-700"}`}>{result.riskLevel === "low" ? "Low Risk" : result.riskLevel === "medium" ? "Medium Risk" : result.riskLevel === "high" ? "High Risk" : "Critical Risk"}</span>
+                      {overallScored && <span className={`inline-flex items-center gap-1 border-2 border-[#1a1a1a] px-2 py-0.5 text-[10px] font-bold ${result.riskLevel === "low" ? "bg-emerald-100 text-emerald-700" : result.riskLevel === "medium" ? "bg-yellow-100 text-yellow-700" : result.riskLevel === "high" ? "bg-orange-100 text-orange-700" : "bg-red-100 text-red-700"}`}>{result.riskLevel === "low" ? "Low Risk" : result.riskLevel === "medium" ? "Medium Risk" : result.riskLevel === "high" ? "High Risk" : "Critical Risk"}</span>}
                     </div>
-                    <p className="mt-1 text-[10px] text-[#1a1a1a]/40">Better than {result.betterThanPercent}% of scanned sites</p>
-                    <ScoreTrend key={result.scannedAt} scan={result} />
+                    {overallScored && <p className="mt-1 text-[10px] text-[#1a1a1a]/40">Better than {result.betterThanPercent}% of scanned sites</p>}
+                    {overallScored && <ScoreTrend key={result.scannedAt} scan={result} />}
                   </div>
                   <div className="flex-1 text-center sm:text-left">
                     <h2 className="text-2xl font-black sm:text-3xl">Your Health Report</h2>
@@ -387,7 +423,7 @@ export default function Landing() {
                       <StatusPill ok={result.status >= 200 && result.status < 400} label={`HTTP ${result.status}`} />
                       <StatusPill ok={result.https} label={result.https ? "HTTPS" : "No HTTPS"} />
                       <StatusPill ok={result.responseTime < 2000} label={`${result.responseTime}ms`} />
-                      <StatusPill ok={true} label={result.pageSizeFormatted} />
+                      {contentUsable && <StatusPill ok={true} label={result.pageSizeFormatted} />}
                       {result.redirects > 0 && <StatusPill ok={result.redirects < 3} label={`${result.redirects} redirect${result.redirects > 1 ? "s" : ""}`} />}
                     </div>
                     <div className="mt-5 flex flex-wrap gap-2 justify-center sm:justify-start">
@@ -403,6 +439,7 @@ export default function Landing() {
             <div className="border-b-2 border-[#1a1a1a] bg-white">
               <div className="mx-auto max-w-6xl px-4 py-6 sm:px-6">
                 <h3 className="mb-4 text-lg font-black">Page Overview</h3>
+                {contentUsable ? (
                 <div className="grid grid-cols-2 gap-0 border-2 border-[#1a1a1a] sm:grid-cols-4">
                   {[
                     { label: "Title", value: result.title ? (result.title.length > 40 ? result.title.slice(0, 40) + "\u2026" : result.title) : "Missing", ok: !!result.title },
@@ -420,6 +457,14 @@ export default function Landing() {
                     </div>
                   ))}
                 </div>
+                ) : (
+                <div className="border-2 border-[#1a1a1a] bg-[#FFFBF0] px-4 py-5">
+                  <p className="text-sm font-black text-[#1a1a1a]">Page metadata was not collected.</p>
+                  <p className="mt-1 text-xs leading-relaxed text-[#1a1a1a]/60">{scanBlocked
+                    ? "The scan was blocked before the website's own content could be fetched — none of this data belongs to the website."
+                    : `The final response (HTTP ${result.status}${scanSummary?.notHtml ? ", not an HTML document" : ""}${scanSummary?.incomplete ? ", incomplete body" : ""}) was not the site's own complete page, so title, description, headings and images were not analyzed.`}</p>
+                </div>
+                )}
               </div>
             </div>
 
@@ -427,6 +472,12 @@ export default function Landing() {
             <div className="border-b-2 border-[#1a1a1a] bg-white">
               <div className="mx-auto max-w-6xl px-4 py-6 sm:px-6">
                 <h3 className="mb-4 text-lg font-black">Security Headers</h3>
+                {scanBlocked ? (
+                <div className="border-2 border-[#1a1a1a] bg-[#FFFBF0] px-4 py-5">
+                  <p className="text-sm font-black text-[#1a1a1a]">Security headers could not be verified.</p>
+                  <p className="mt-1 text-xs leading-relaxed text-[#1a1a1a]/60">The response came from the site's bot protection, not from its server configuration — nothing here is reported as present or missing.</p>
+                </div>
+                ) : (
                 <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                   {[
                     { label: "Content-Security-Policy", present: result.hasCSP, hint: "Protects against XSS and injection attacks" },
@@ -442,6 +493,7 @@ export default function Landing() {
                     </div>
                   ))}
                 </div>
+                )}
               </div>
             </div>
 
