@@ -345,6 +345,83 @@ export function resolveScanScores(scan: StoredScanScores): ResolvedScanScores {
   };
 }
 
+// ── Honest quick-win impact estimates ─────────────────────────────────────
+// A recommendation's score impact must never be inferred from its priority
+// label — the label has no relationship to the scoring formula. The honest
+// estimate uses the same counts and weights as the score itself: fixing one
+// failing check moves it to pass (+100/applicable in its category), fixing a
+// warning is worth half of that, and the overall effect scales the category
+// delta by the category's weight over the total weight of scored categories.
+
+export interface GainCounts {
+  /** Derived score, or null when the category has no score. */
+  score: number | null;
+  passed: number;
+  failed: number;
+  warnings: number;
+}
+
+/**
+ * Estimated overall-score impact, in points to one decimal, of fixing ONE
+ * check in `category`. Returns 0 when the estimate cannot be made honestly:
+ * the category has no score, the category has no weight, nothing was
+ * verified, `scoredWeight` is zero, or the finding is "unable-to-verify"
+ * (there is no verified check behind it to improve).
+ */
+export function estimateOverallGain(
+  counts: GainCounts | null | undefined,
+  category: string,
+  issueStatus: string | undefined,
+  scoredWeight: number,
+): number {
+  if (!counts || counts.score === null) return 0;
+  const weight = OVERALL_WEIGHTS[category];
+  if (!weight || scoredWeight <= 0) return 0;
+  if (issueStatus === "unable-to-verify") return 0;
+  const applicable = counts.passed + counts.failed + counts.warnings;
+  if (applicable <= 0) return 0;
+  const checkEquivalents = issueStatus === "warning" ? 0.5 : 1;
+  return Math.round(((100 * checkEquivalents) / applicable) * (weight / scoredWeight) * 10) / 10;
+}
+
+interface QuickWinLike {
+  category: string;
+  message: string;
+}
+
+/**
+ * Honest potential gains for a saved document's quick wins, aligned
+ * index-for-index with the input list. Documents saved before this fix carry
+ * a `potentialGain` fabricated from the priority label, so the stored value
+ * is deliberately ignored: each gain is re-derived from the document's OWN
+ * saved check counts and the published weights, using the recorded status of
+ * the matching finding (looked up by category + message).
+ */
+export function honestQuickWinGains(
+  scan: StoredScanScores & {
+    issues?: Array<{ category: string; message: string; status?: string }>;
+  },
+  quickWins: readonly QuickWinLike[],
+): number[] {
+  const resolved = resolveScanScores(scan);
+  let scoredWeight = 0;
+  for (const [category, weight] of Object.entries(OVERALL_WEIGHTS)) {
+    if ((resolved.categories[category]?.score ?? null) !== null) scoredWeight += weight;
+  }
+  const statusByKey = new Map<string, string | undefined>();
+  for (const issue of scan.issues ?? []) {
+    statusByKey.set(`${issue.category}\u0000${issue.message}`, issue.status);
+  }
+  return quickWins.map((qw) =>
+    estimateOverallGain(
+      resolved.categories[qw.category],
+      qw.category,
+      statusByKey.get(`${qw.category}\u0000${qw.message}`),
+      scoredWeight,
+    ),
+  );
+}
+
 export function scoreToGrade(score: number): string {
   if (score >= 90) return "A";
   if (score >= 80) return "B";

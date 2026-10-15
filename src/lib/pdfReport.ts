@@ -14,7 +14,7 @@
 // clipped.
 
 import { jsPDF } from "jspdf";
-import { resolveScanScores } from "./scoring";
+import { resolveScanScores, honestQuickWinGains } from "./scoring";
 
 // ── Input types (structural subset of the saved scan document) ───────────────
 
@@ -648,6 +648,10 @@ function categoryData(scan: PdfScanInput) {
       warnings: r?.warnings ?? 0,
       unverified: r?.unverified ?? 0,
       notApplicable: r?.notApplicable ?? 0,
+      // Verified checks the score rests on — the formula's denominator.
+      applicable: r
+        ? r.passed + r.failed + r.warnings
+        : (checks?.passed ?? 0) + (checks?.failed ?? 0) + (checks?.warnings ?? 0),
       factors: checks?.factors ?? [],
       formula: checks?.formula,
     };
@@ -832,6 +836,21 @@ function composeCover(eng: Engine, scan: PdfScanInput, opts: PdfOptions, generat
   runOps(eng, [
     ...mkText(eng, "N/A = Not Applicable · UTV = Unable to Verify (both excluded from scoring). A “—” means too few verified checks for a score.", { size: 8, style: "italic", color: GRAY }),
   ]);
+  runOps(eng, [
+    ...mkText(eng, "Performance is measured from server response timing (HTTP), not browser-rendered page speed.", { size: 8, style: "italic", color: GRAY }),
+  ]);
+  const lowCoverage = CATEGORY_ORDER.filter((cat) => {
+    const c = cats[cat];
+    return c.hasScore && c.applicable > 0 && c.applicable < 3;
+  }).map(
+    (cat) =>
+      `${cats[cat].applicable} verified check${cats[cat].applicable === 1 ? "" : "s"} — the ${cat} score rests on that evidence alone, not a comprehensive audit.`,
+  );
+  if (lowCoverage.length > 0) {
+    runOps(eng, [
+      ...mkText(eng, `Low coverage: ${lowCoverage.join(" · ")}`, { size: 8, style: "bold", color: AMBER_DARK }),
+    ]);
+  }
 }
 
 function composeActionPlan(eng: Engine, scan: PdfScanInput): void {
@@ -874,11 +893,17 @@ function composeActionPlan(eng: Engine, scan: PdfScanInput): void {
   const quickWins = scan.quickWins ?? [];
   if (quickWins.length > 0) {
     runOps(eng, subheading(eng, "Quick wins (low effort, score gain)"));
-    for (const qw of quickWins) {
+    // Honest gains re-derived from this document's own check counts — the
+    // stored potentialGain was fabricated from priority labels (audit
+    // finding), so it is deliberately ignored at render time.
+    const gains = honestQuickWinGains(scan, quickWins);
+    for (let qi = 0; qi < quickWins.length; qi++) {
+      const qw = quickWins[qi];
+      const gain = gains[qi] ?? 0;
       runOps(eng, [
         mkChips(eng, [
           { text: qw.category.toUpperCase(), bg: WHITE, fg: INK, border: INK },
-          { text: `+${qw.potentialGain} PTS POTENTIAL`, bg: GREEN_BG, fg: GREEN, border: GREEN },
+          { text: gain > 0 ? `~+${gain} PTS OVERALL` : "BEST PRACTICE", bg: GREEN_BG, fg: GREEN, border: GREEN },
         ], { keep: 15 }),
         mkGap(2),
         ...mkText(eng, qw.message, { size: 9, keep: 16 }),

@@ -14,7 +14,7 @@ import {
   splitRecommendations,
 } from "../lib/recommendations";
 import { detectHostingPlatform } from "../lib/hosting";
-import { resolveScanScores, scoreToGrade } from "../lib/scoring";
+import { resolveScanScores, scoreToGrade, honestQuickWinGains } from "../lib/scoring";
 import { ScoreTrend } from "../components/ScoreTrend";
 import AIAssistant from "../components/AIAssistant";
 import type { Id } from "../convex/_generated/dataModel";
@@ -127,6 +127,8 @@ function ScoreBar({ label, score, icon: Icon, color, bg, checks, weight }: {
   const grade = hasScore ? scoreToGrade(score) : "—";
   const unverified = checks.unverified ?? checks.notChecked ?? 0;
   const notApplicable = checks.notApplicable ?? 0;
+  // Verified checks the score actually rests on — the formula's denominator.
+  const applicable = checks.passed + checks.failed + checks.warnings;
   return (
     <div className="border-2 border-[#1a1a1a] bg-[#FFFBF0] p-4">
       <div className="flex items-center justify-between">
@@ -138,6 +140,11 @@ function ScoreBar({ label, score, icon: Icon, color, bg, checks, weight }: {
               {checks.passed} passed{checks.failed > 0 ? ` · ${checks.failed} failed` : ""}{checks.warnings > 0 ? ` · ${checks.warnings} warnings` : ""}{unverified > 0 ? ` · ${unverified} unable to verify` : ""}{notApplicable > 0 ? ` · ${notApplicable} not applicable` : ""}
               {weight && <span className="ml-1 text-[#1a1a1a]/30">({weight} of total)</span>}
             </div>
+            {hasScore && applicable > 0 && applicable < 3 && (
+              <div className="mt-1 text-[11px] font-bold text-amber-700">
+                Based on only {applicable} verified check{applicable === 1 ? "" : "s"} — treat this score as a signal, not a comprehensive audit.
+              </div>
+            )}
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -343,6 +350,10 @@ export default function Report() {
   const potentialFindings = s.issues.length - confirmedFindings;
   const criticalIssues = s.topIssues?.filter((i) => i.priority === "critical") ?? s.issues.filter((i) => i.priority === "critical").slice(0, 5);
   const quickWins = s.quickWins ?? [];
+  // Honest per-fix gains re-derived from this document's own check counts —
+  // the stored potentialGain was fabricated from priority labels (audit
+  // finding), so it is deliberately ignored at render time.
+  const quickWinGains = honestQuickWinGains(s, quickWins);
 
   // One canonical recommendation list per report. Repeated advice is
   // collapsed, each finding has exactly one detailed card, and every summary
@@ -642,7 +653,7 @@ export default function Report() {
                       <p className="text-sm font-bold text-[#1a1a1a]">{qw.message}</p>
                       <div className="flex flex-wrap items-center gap-2 mt-0.5">
                         <span className={`border ${pri.border} ${pri.bg} px-1.5 py-0.5 text-[10px] font-bold ${pri.color}`}>{pri.label}</span>
-                        <span className="text-[10px] font-bold text-emerald-600">+{qw.potentialGain} pts potential</span>
+                        <span className="text-[10px] font-bold text-emerald-600">{(quickWinGains[i] ?? 0) > 0 ? `≈+${quickWinGains[i]} pts overall` : "Best practice — no direct score change"}</span>
                       </div>
                     </div>
                   </>
@@ -664,7 +675,8 @@ export default function Report() {
       {/* Category Scores */}
       <section className="border-b-2 border-[#1a1a1a] bg-white">
         <div className="mx-auto max-w-5xl px-4 py-6 sm:px-6">
-          <h2 className="mb-4 text-lg font-black">Category Scores</h2>
+          <h2 className="mb-1 text-lg font-black">Category Scores</h2>
+          <p className="mb-4 text-xs text-[#1a1a1a]/55">Performance is measured from server response timing (HTTP), not browser-rendered page speed.</p>
           <div className="space-y-3">
             {categoryOrder.map((cat) => {
               const meta = categoryMeta[cat];

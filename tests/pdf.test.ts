@@ -110,7 +110,13 @@ describe("PDF export — normal scan", () => {
     expect(pdf.norm.indexOf("2. IMPORTANT")).toBeLessThan(pdf.norm.indexOf("5. RECOMMENDED"));
     expect(pdf.norm.indexOf("5. RECOMMENDED")).toBeLessThan(pdf.norm.indexOf("7. NICE TO HAVE"));
     expect(pdf.norm).toContain("Quick wins (low effort, score gain)");
-    expect(pdf.norm).toContain("+4 PTS POTENTIAL");
+    // Honest gains re-derived from this fixture's own counts (audit fix):
+    // SEO applicable 9, fail→pass, weight .25 → 100/9×.25 = 2.8;
+    // Security applicable 9, weight .30 → 100/9×.3 = 3.3. The stored
+    // potentialGain (4/3, fabricated from priority) must not be rendered.
+    expect(pdf.norm).toContain("~+2.8 PTS OVERALL");
+    expect(pdf.norm).toContain("~+3.3 PTS OVERALL");
+    expect(pdf.norm).not.toContain("PTS POTENTIAL");
   });
 
   test("renders methodology, limitations and the security disclaimer", () => {

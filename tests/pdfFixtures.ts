@@ -485,9 +485,59 @@ export function sensitiveScan(): PdfScanInput {
         message: "Request evidence contained an authorization value",
         category: "Security", severity: "info", priority: "nice-to-have",
         evidence: "Authorization: Bearer sk-live-abc123456789 was echoed by the error page.",
-        evidenceUrl: "https://app.example.com/", method: "http", stage: "headers", checkKey: "auth-echo", detectedAt: SCANNED_AT, confirmed: true, status: "fail",
+        evidenceUrl: "https://app.example.com/", method: "http", stage: "headers",        checkKey: "auth-echo", detectedAt: SCANNED_AT, confirmed: true, status: "fail",
       }),
     ],
     topIssues: [],
   });
+}
+
+/**
+ * The tester's reproduction case (example.com shape): a page where
+ * Accessibility rests on ONE verified check (html-lang passes) while
+ * image-alt and form-labels are Not Applicable — so the category resolves to
+ * 100 by the applicable-only formula. The renderers must pair that score with
+ * explicit low-coverage context, never present a bare 100. The quickWins
+ * carry the legacy priority-fabricated potentialGain (3) to prove the
+ * renderers re-derive the honest estimate instead of trusting it.
+ */
+export function sparseCoverageScan(): PdfScanInput {
+  return base({
+    accessibilityChecks: {
+      score: 100,
+      passed: 1,
+      failed: 0,
+      warnings: 0,
+      notChecked: 2,
+      applicable: 1,
+      unverified: 0,
+      notApplicable: 2,
+      hasScore: true,
+      factors: ["html-lang: pass", "image-alt: N/A (no images on the page)", "form-labels: N/A (no form inputs)"],
+    },
+    accessibilityScore: 100,
+    quickWins: [
+      { category: "SEO", message: "No sitemap.xml found.", potentialGain: 3, priority: "nice-to-have" },
+      { category: "SEO", message: "No robots.txt file found.", potentialGain: 3, priority: "nice-to-have" },
+    ],
+    issues: [
+      finding({
+        message: "No sitemap.xml found.",
+        category: "SEO", severity: "info", priority: "nice-to-have",
+        whyItMatters: "A sitemap helps search engines discover all your pages, especially for large sites or pages not well-linked internally.",
+        evidence: "GET https://example.com/sitemap.xml returned HTTP 404.",
+        evidenceUrl: "https://example.com/", method: "http", stage: "origin-probe", checkKey: "sitemap-xml", detectedAt: SCANNED_AT, confirmed: true, status: "warning",
+        howToFix: "Generate a sitemap.xml and submit it to Google Search Console and Bing Webmaster Tools.",
+      }),
+      finding({
+        message: "No robots.txt file found.",
+        category: "SEO", severity: "info", priority: "nice-to-have",
+        whyItMatters: "A robots.txt file helps search engines understand which pages to crawl. While not strictly required, it's considered best practice.",
+        evidence: "GET https://example.com/robots.txt returned HTTP 404.",
+        evidenceUrl: "https://example.com/", method: "http", stage: "origin-probe", checkKey: "robots-txt", detectedAt: SCANNED_AT, confirmed: true, status: "warning",
+        howToFix: "Create a robots.txt file at your site root with basic crawl directives.",
+      }),
+    ],
+    topIssues: [],
+  } as PdfScanInput);
 }

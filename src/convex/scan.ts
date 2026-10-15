@@ -4,7 +4,7 @@ import { v } from "convex/values";
 import { action } from "./_generated/server";
 import { internal } from "./_generated/api";
 import type { Issue, Priority, Severity, CheckResult, CategoryScore, QuickWin, SSLInfo, CookieInfo, MixedContent, ServerInfo, SiteIdentity, ScanSummary } from "../types/scan";
-import { scoreCategory, overallScore, CATEGORY_SCORE_FORMULA } from "../lib/scoring";
+import { scoreCategory, overallScore, CATEGORY_SCORE_FORMULA, estimateOverallGain } from "../lib/scoring";
 import { fetchTarget, detectBlock, isHtmlResponse } from "../lib/fetchTarget";
 import { makeFinding, type FindingInput } from "../lib/findings";
 import { detectSitePages } from "../lib/siteIdentity";
@@ -1382,21 +1382,40 @@ export const scanWebsite = action({
     );
     const topIssues = sortedIssues.slice(0, 5);
 
-    // Quick Wins: top 3 fixes with biggest impact (excluding critical already covered)
+    // Quick Wins: the non-critical fixes with the biggest ESTIMATED score
+    // impact. The gain is computed from this scan's own check counts and the
+    // published weights (estimateOverallGain) — never inferred from the
+    // priority label, which has no relationship to the scoring formula.
+    const catScoreByName: Record<string, CategoryScore | null> = {
+      Performance: perfCatScore.hasScore ? perfCatScore : null,
+      SEO: seoCatScore.hasScore ? seoCatScore : null,
+      Security: secCatScore.hasScore ? secCatScore : null,
+      Accessibility: a11yCatScore.hasScore ? a11yCatScore : null,
+      "Technical Health": techCatScore.hasScore ? techCatScore : null,
+    };
     const quickWins: QuickWin[] = sortedIssues
       .filter((issue) => issue.priority !== "critical")
-      .slice(0, 5)
       .map((issue) => {
-        // Deterministic potential-gain estimates based on priority band
-        const potentialGain = issue.priority === "important" ? 10 : issue.priority === "recommended" ? 6 : 3;
+        const cat = catScoreByName[issue.category];
         return {
           category: issue.category,
           message: issue.message,
-          potentialGain,
+          potentialGain: estimateOverallGain(
+            cat
+              ? { score: cat.score, passed: cat.passed, failed: cat.failed, warnings: cat.warnings }
+              : null,
+            issue.category,
+            issue.status,
+            overallResult.usedWeight,
+          ),
           priority: issue.priority,
         };
       })
-      .sort((a, b) => b.potentialGain - a.potentialGain)
+      .sort(
+        (a, b) =>
+          b.potentialGain - a.potentialGain ||
+          priorityOrder[a.priority] - priorityOrder[b.priority],
+      )
       .slice(0, 5);
 
     // Positive feedback if no issues

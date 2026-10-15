@@ -6,6 +6,7 @@ import FeedbackModal from "../components/FeedbackModal";
 import { addScanToHistory, getScanHistory, clearScanHistory, domainFromUrl, formatScanDate, type ScanHistoryEntry } from "../lib/scanHistory";
 import { ScoreTrend } from "../components/ScoreTrend";
 import { dedupeIssues } from "../lib/recommendations";
+import { honestQuickWinGains } from "../lib/scoring";
 import { History, Trash2 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useNavigate, Link } from "react-router";
@@ -249,6 +250,10 @@ export default function Landing() {
     ? !scanBlocked && !scanSummary?.notHtml && !scanSummary?.incomplete && result.status >= 200 && result.status < 400
     : false;
   const overallScored = scanSummary ? scanSummary.overallScored !== false : true;
+  // Honest per-fix gains re-derived from this document's own check counts —
+  // the stored potentialGain was fabricated from priority labels (audit
+  // finding), so it is deliberately ignored at render time.
+  const quickWinGains = result ? honestQuickWinGains(result, result.quickWins ?? []) : [];
 
   return (
     <div className="min-h-screen bg-[#FFFBF0] text-[#1a1a1a]">
@@ -513,7 +518,7 @@ export default function Landing() {
                             <p className="text-sm font-bold text-[#1a1a1a]">{qw.message}</p>
                             <div className="flex items-center gap-2 mt-0.5">
                               <span className={`border ${pri.border} ${pri.bg} px-1.5 py-0.5 text-[10px] font-bold ${pri.color}`}>{pri.label}</span>
-                              <span className="text-[10px] font-bold text-emerald-600">+{qw.potentialGain} pts potential</span>
+                              <span className="text-[10px] font-bold text-emerald-600">{(quickWinGains[i] ?? 0) > 0 ? `≈+${quickWinGains[i]} pts overall` : "Best practice — no direct score change"}</span>
                             </div>
                           </div>
                         </div>
