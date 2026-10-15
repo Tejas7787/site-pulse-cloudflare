@@ -332,12 +332,21 @@ describe("PDF export — determinism & metadata", () => {
     expect(a.pageCount).toBe(b.pageCount);
     expect(a.fileName).toBe(b.fileName);
     expect(a.text).toBe(b.text);
-    // Bytes are identical apart from jsPDF's random per-document /ID salt.
-    const stripId = (bytes: Uint8Array) =>
+    // Bytes are identical apart from jsPDF's volatile per-document metadata:
+    // the random /ID salt, and /CreationDate, which jsPDF stamps from the
+    // wall clock at build time (second precision) rather than from the
+    // injected generatedAt — so two builds straddling a second boundary
+    // differ only there. Content determinism is what this test asserts;
+    // the volatile metadata fields are normalized like the /ID salt.
+    const stripVolatile = (bytes: Uint8Array) =>
       new TextDecoder("latin1")
         .decode(bytes)
-        .replace(/\/ID \[ <[0-9A-F]+> <[0-9A-F]+> \]/, "/ID [ <ID> <ID> ]");
-    expect(stripId(a.bytes)).toBe(stripId(b.bytes));
+        .replace(/\/ID \[ <[0-9A-F]+> <[0-9A-F]+> \]/, "/ID [ <ID> <ID> ]")
+        .replace(
+          /\/CreationDate \(D:\d{14}[+-]\d{2}'\d{2}'\)/,
+          "/CreationDate (D:<CREATED>)",
+        );
+    expect(stripVolatile(a.bytes)).toBe(stripVolatile(b.bytes));
   });
 
   test("sets document metadata", () => {
