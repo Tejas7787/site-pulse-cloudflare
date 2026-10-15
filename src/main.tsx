@@ -19,6 +19,7 @@ const Privacy = lazy(() => import("./pages/Legal.tsx").then((m) => ({ default: m
 const Terms = lazy(() => import("./pages/Legal.tsx").then((m) => ({ default: m.Terms })));
 const Admin = lazy(() => import("./pages/Admin.tsx"));
 const About = lazy(() => import("./pages/About.tsx"));
+const Monitors = lazy(() => import("./pages/Monitors.tsx"));
 
 // Simple loading fallback for route transitions
 function RouteLoading() {
@@ -149,6 +150,15 @@ createRoot(document.getElementById("root")!).render(
                 element={
                   <RequireAuth>
                     <Dashboard />
+                  </RequireAuth>
+                }
+              />
+              {/* Phase 2: automatic uptime monitoring (auth-only: alerts need an account email). */}
+              <Route
+                path="/monitors"
+                element={
+                  <RequireAuth>
+                    <Monitors />
                   </RequireAuth>
                 }
               />

@@ -23,4 +23,28 @@ crons.interval(
   { maxDeletes: 200 },
 );
 
+// ── Phase 2: automatic uptime monitoring ────────────────────────────────────
+// Every minute, schedule one probe per due monitor (src/convex/monitors.ts →
+// src/convex/probe.ts). Runs entirely server-side — no browser needed.
+// The dispatcher is a bounded batch, advances `nextCheckAt` BEFORE scheduling
+// (so an overlapping tick can never double-probe), and spreads probes with a
+// per-monitor jitter. When nothing is due, the indexed by_due query is an
+// immediate no-op.
+crons.interval(
+  "dispatch due uptime monitors",
+  { minutes: 1 },
+  internal.monitors.dispatchDue,
+  {},
+);
+
+// Delete expired probe history, incidents and alert rows in bounded batches
+// (windows defined in src/convex/retention.ts). Steady-state cost is one
+// indexed no-op per hour.
+crons.interval(
+  "delete expired uptime data",
+  { hours: 1 },
+  internal.monitors.deleteExpiredUptimeData,
+  { maxDeletes: 200 },
+);
+
 export default crons;

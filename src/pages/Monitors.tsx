@@ -1,0 +1,391 @@
+import { useState, type FormEvent } from "react";
+import { useMutation, useQuery } from "convex/react";
+import { Link, useNavigate } from "react-router";
+import { formatDistanceToNow } from "date-fns";
+import {
+  Activity,
+  AlertTriangle,
+  ArrowLeft,
+  CheckCircle2,
+  Clock,
+  Mail,
+  Pause,
+  Play,
+  Plus,
+  Trash2,
+  XCircle,
+} from "lucide-react";
+import { api } from "../convex/_generated/api";
+import type { Id } from "../convex/_generated/dataModel";
+import { useAuth } from "@/hooks/use-auth";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { MONITOR_INTERVALS_MS, type ProbeResult } from "@/lib/monitoring";
+
+// ── /monitors — Phase 2: automatic uptime monitoring ────────────────────────
+// Protected route. Monitors are probed server-side every minute by the Convex
+// cron dispatcher, so this page is a live view (Convex queries are reactive —
+// a probe write shows up here without a refresh).
+
+const INTERVAL_LABELS: Record<number, string> = {
+  300_000: "every 5 minutes",
+  900_000: "every 15 minutes",
+  1_800_000: "every 30 minutes",
+  3_600_000: "every hour",
+};
+
+const STATE_STYLES: Record<string, string> = {
+  up: "border-emerald-300 bg-emerald-50 text-emerald-700",
+  down: "border-red-300 bg-red-50 text-red-700",
+  suspect: "border-amber-300 bg-amber-50 text-amber-700",
+  unknown: "border-border bg-muted text-muted-foreground",
+};
+
+const DOT_STYLES: Record<ProbeResult, string> = {
+  ok: "bg-emerald-500",
+  down: "bg-red-500",
+  blocked: "bg-amber-500",
+  error: "bg-zinc-400",
+};
+
+function timeAgo(ms: number | undefined): string {
+  if (!ms) return "never";
+  return `${formatDistanceToNow(ms, { addSuffix: true })}`;
+}
+
+export default function Monitors() {
+  const { user } = useAuth();
+  const navigate = useNavigate();
+
+  const [url, setUrl] = useState("");
+  const [intervalMs, setIntervalMs] = useState<number>(MONITOR_INTERVALS_MS[0]);
+  const [alertEmail, setAlertEmail] = useState("");
+  const [creating, setCreating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [selected, setSelected] = useState<Id<"monitors"> | null>(null);
+
+  const monitors = useQuery(api.monitors.listMonitors);
+  const detail = useQuery(
+    api.monitors.getMonitor,
+    selected ? { monitorId: selected } : "skip",
+  );
+
+  const createMonitor = useMutation(api.monitors.createMonitor);
+  const updateMonitor = useMutation(api.monitors.updateMonitor);
+
+  const handleCreate = async (event: FormEvent) => {
+    event.preventDefault();
+    setCreating(true);
+    setError(null);
+    try {
+      const id = await createMonitor({
+        url,
+        intervalMs,
+        ...(alertEmail.trim() ? { alertEmail: alertEmail.trim() } : {}),
+      });
+      setUrl("");
+      setAlertEmail("");
+      setSelected(id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not create the monitor.");
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const runAction = async (
+    monitorId: Id<"monitors">,
+    action: "pause" | "resume" | "delete",
+  ) => {
+    try {
+      await updateMonitor({ monitorId, action });
+      if (action === "delete") {
+        if (selected === monitorId) setSelected(null);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Action failed.");
+    }
+  };
+
+  const loading = monitors === undefined;
+  const list = monitors ?? [];
+
+  return (
+    <main className="min-h-screen bg-background px-6 py-10 text-foreground">
+      <div className="mx-auto flex w-full max-w-5xl flex-col gap-8">
+        <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <Link
+              to="/dashboard"
+              className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
+            >
+              <ArrowLeft className="size-4" /> Dashboard
+            </Link>
+            <h1 className="mt-2 flex items-center gap-2 text-3xl font-bold tracking-tight">
+              <Activity className="size-7" /> Uptime monitors
+            </h1>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Checked automatically from our servers — no browser open needed.
+            </p>
+          </div>
+          <Button type="button" variant="outline" className="gap-2 self-start" onClick={() => navigate("/dashboard")}>
+            <ArrowLeft className="size-4" /> Back
+          </Button>
+        </header>
+
+        {error && (
+          <div className="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-700">
+            {error}
+          </div>
+        )}
+
+        {/* ── Create ─────────────────────────────────────────────────── */}
+        <Card className="border-border/70 shadow-none">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Plus className="size-4" /> Watch a website
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <form onSubmit={handleCreate} className="flex flex-col gap-3 sm:flex-row sm:items-end">
+              <label className="flex flex-1 flex-col gap-1.5 text-sm font-medium">
+                Website URL
+                <Input
+                  value={url}
+                  onChange={(e) => setUrl(e.target.value)}
+                  placeholder="https://example.com"
+                  required
+                  inputMode="url"
+                />
+              </label>
+              <label className="flex flex-col gap-1.5 text-sm font-medium">
+                Frequency
+                <select
+                  value={intervalMs}
+                  onChange={(e) => setIntervalMs(Number(e.target.value))}
+                  className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+                >
+                  {MONITOR_INTERVALS_MS.map((ms) => (
+                    <option key={ms} value={ms}>
+                      {INTERVAL_LABELS[ms]}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="flex flex-1 flex-col gap-1.5 text-sm font-medium">
+                <span className="inline-flex items-center gap-1.5">
+                  <Mail className="size-3.5" /> Alert email (optional)
+                </span>
+                <Input
+                  type="email"
+                  value={alertEmail}
+                  onChange={(e) => setAlertEmail(e.target.value)}
+                  placeholder={user?.email ?? "you@example.com"}
+                />
+              </label>
+              <Button type="submit" className="gap-2" disabled={creating}>
+                <Plus className="size-4" /> {creating ? "Adding…" : "Monitor"}
+              </Button>
+            </form>
+            <p className="mt-3 text-xs text-muted-foreground">
+              Free plan: up to 10 monitors. Downtime is declared only after 2
+              consecutive failed checks, so single blips never alert you.
+              {!alertEmail.trim() && user?.email ? ` Alerts go to ${user.email}.` : ""}
+            </p>
+          </CardContent>
+        </Card>
+
+        {/* ── List ───────────────────────────────────────────────────── */}
+        {loading ? (
+          <p className="text-sm text-muted-foreground">Loading monitors…</p>
+        ) : list.length === 0 ? (
+          <Card className="border-border/70 shadow-none">
+            <CardContent className="text-sm text-muted-foreground">
+              No monitors yet. Add your first website above to start tracking
+              uptime, response time and incidents.
+            </CardContent>
+          </Card>
+        ) : (
+          <div className="grid gap-4">
+            {list.map((monitor) => {
+              const isSelected = selected === monitor._id;
+              return (
+                <Card key={monitor._id} className="border-border/70 shadow-none">
+                  <CardHeader className="flex flex-row items-center justify-between gap-3 space-y-0">
+                    <div className="min-w-0">
+                      <CardTitle className="flex items-center gap-2 truncate text-base">
+                        <span
+                          className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs font-bold uppercase ${STATE_STYLES[monitor.state]}`}
+                        >
+                          {monitor.state === "suspect" ? "checking" : monitor.state}
+                        </span>
+                        <span className="truncate">{monitor.name}</span>
+                      </CardTitle>
+                      <p className="mt-1 truncate text-xs text-muted-foreground">
+                        {monitor.url} · {INTERVAL_LABELS[monitor.intervalMs]}
+                        {monitor.status === "paused" ? " · paused" : ""}
+                      </p>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-2">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="gap-1.5"
+                        onClick={() => setSelected(isSelected ? null : monitor._id)}
+                      >
+                        {isSelected ? "Hide details" : "Details"}
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="gap-1.5"
+                        onClick={() =>
+                          runAction(monitor._id, monitor.status === "active" ? "pause" : "resume")
+                        }
+                      >
+                        {monitor.status === "active" ? (
+                          <>
+                            <Pause className="size-3.5" /> Pause
+                          </>
+                        ) : (
+                          <>
+                            <Play className="size-3.5" /> Resume
+                          </>
+                        )}
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="gap-1.5 text-red-600 hover:text-red-700"
+                        onClick={() => runAction(monitor._id, "delete")}
+                      >
+                        <Trash2 className="size-3.5" />
+                      </Button>
+                    </div>
+                  </CardHeader>
+
+                  <CardContent className="space-y-4">
+                    <div className="flex flex-wrap gap-x-6 gap-y-1 text-xs text-muted-foreground">
+                      <span className="inline-flex items-center gap-1.5">
+                        <Clock className="size-3.5" /> Last check {timeAgo(monitor.lastCheckedAt)}
+                      </span>
+                      <span className="inline-flex items-center gap-1.5">
+                        {monitor.lastResult === "ok" ? (
+                          <CheckCircle2 className="size-3.5 text-emerald-600" />
+                        ) : monitor.lastResult ? (
+                          <XCircle className="size-3.5 text-red-600" />
+                        ) : (
+                          <Activity className="size-3.5" />
+                        )}
+                        {monitor.lastResult
+                          ? `${monitor.lastResult}${monitor.lastHttpStatus ? ` · HTTP ${monitor.lastHttpStatus}` : ""}`
+                          : "no result yet"}
+                      </span>
+                      {monitor.lastDurationMs !== undefined && (
+                        <span>{monitor.lastDurationMs} ms</span>
+                      )}
+                      {monitor.consecutiveFailures > 0 && (
+                        <span className="font-medium text-red-600">
+                          {monitor.consecutiveFailures} failing check
+                          {monitor.consecutiveFailures === 1 ? "" : "s"}
+                        </span>
+                      )}
+                    </div>
+
+                    {monitor.openIncident && (
+                      <div className="flex items-start gap-2 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">
+                        <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+                        <span>
+                          Down since {timeAgo(monitor.openIncident.openedAt)}
+                          {monitor.openIncident.reason ? ` (${monitor.openIncident.reason})` : ""}
+                          {" — "}a recovery email follows after two successful checks.
+                        </span>
+                      </div>
+                    )}
+
+                    {isSelected && detail && detail.monitor._id === monitor._id && (
+                      <div className="space-y-4 border-t pt-4">
+                        <div className="flex flex-wrap items-center gap-6 text-sm">
+                          <div>
+                            <div className="text-2xl font-bold">
+                              {detail.availability === null ? "—" : `${detail.availability}%`}
+                            </div>
+                            <div className="text-xs text-muted-foreground">
+                              availability (last {detail.checks.length} checks)
+                            </div>
+                          </div>
+                          <div>
+                            <div className="text-2xl font-bold">{detail.incidents.length}</div>
+                            <div className="text-xs text-muted-foreground">incidents recorded</div>
+                          </div>
+                          <div>
+                            <div className="text-sm font-medium">
+                              {detail.alertDestination ?? "no alert recipient"}
+                            </div>
+                            <div className="text-xs text-muted-foreground">alert email</div>
+                          </div>
+                        </div>
+
+                        {detail.checks.length > 0 && (
+                          <div>
+                            <div className="mb-1.5 text-xs font-medium text-muted-foreground">
+                              Last {detail.checks.length} checks (oldest → newest)
+                            </div>
+                            <div className="flex flex-wrap gap-1">
+                              {[...detail.checks].reverse().map((check) => (
+                                <span
+                                  key={check._id}
+                                  title={`${new Date(check.checkedAt).toISOString()} · ${check.result}${
+                                    check.detail ? ` · ${check.detail}` : ""
+                                  }`}
+                                  className={`size-2.5 rounded-sm ${DOT_STYLES[check.result]}`}
+                                />
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {detail.incidents.length > 0 && (
+                          <div>
+                            <div className="mb-1.5 text-xs font-medium text-muted-foreground">
+                              Incidents
+                            </div>
+                            <ul className="space-y-1 text-xs">
+                              {detail.incidents.map((incident) => (
+                                <li
+                                  key={incident._id}
+                                  className="flex flex-wrap items-center gap-2 rounded border border-border/70 px-2 py-1.5"
+                                >
+                                  <span
+                                    className={`font-bold uppercase ${incident.open ? "text-red-600" : "text-emerald-600"}`}
+                                  >
+                                    {incident.open ? "open" : "resolved"}
+                                  </span>
+                                  <span>{incident.reason}</span>
+                                  <span className="text-muted-foreground">
+                                    {new Date(incident.openedAt).toLocaleString()}
+                                    {incident.recoveredAt
+                                      ? ` → ${new Date(incident.recoveredAt).toLocaleString()}`
+                                      : ""}
+                                  </span>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </main>
+  );
+}

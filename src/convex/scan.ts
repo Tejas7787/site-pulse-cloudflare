@@ -9,6 +9,7 @@ import { fetchTarget, detectBlock, isHtmlResponse } from "../lib/fetchTarget";
 import { makeFinding, type FindingInput } from "../lib/findings";
 import { detectSitePages } from "../lib/siteIdentity";
 import tls from "node:tls";
+import { checkUrlSafety } from "../lib/ssrf";
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
@@ -31,57 +32,10 @@ function clamp(v: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, v));
 }
 
-// ── SSRF Protection ──────────────────────────────────────────────────
-
-function isPrivateHost(hostname: string): boolean {
-  const h = hostname.toLowerCase();
-  if (
-    h === "localhost" || h.endsWith(".localhost") || h === "[::1]" ||
-    h === "0.0.0.0" || h === "127.0.0.0" || h === "127.0.0.1" || h === "loopback"
-  ) return true;
-  if (
-    h.endsWith(".internal") || h.endsWith(".local") || h.endsWith(".lan") ||
-    h.endsWith(".home") || h.endsWith(".corp") || h.endsWith(".intranet") ||
-    h.endsWith(".localdomain") || h.endsWith(".private") ||
-    h === "metadata.google.internal" || h === "169.254.169.254"
-  ) return true;
-  const ip4Match = h.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
-  if (ip4Match) {
-    const [, a, b] = ip4Match.map(Number);
-    if (
-      a === 0 || a === 10 || (a === 100 && b >= 64 && b <= 127) ||
-      a === 127 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) ||
-      (a === 192 && b === 0) || (a === 192 && b === 2) ||
-      (a === 198 && (b === 18 || b === 19)) ||
-      (a === 198 && b === 51 && +ip4Match[3] === 100) ||
-      (a === 203 && b === 0 && +ip4Match[3] === 113) || a >= 224
-    ) return true;
-  }
-  if (h === "::1" || h.startsWith("fc") || h.startsWith("fd") || h.startsWith("fe80")) return true;
-  return false;
-}
-
-async function isUrlSafe(urlStr: string): Promise<boolean> {
-  let parsed: URL;
-  try { parsed = new URL(urlStr); } catch { return false; }
-  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
-  const hostname = parsed.hostname;
-  if (isPrivateHost(hostname)) return false;
-  try {
-    const dns = await import("node:dns");
-    const addrs = await new Promise<string[]>((resolve, reject) => {
-      dns.resolve4(hostname, (err: Error | null, addresses: string[]) => {
-        if (err) {
-          dns.resolve6(hostname, (err2: Error | null, a6: string[]) => {
-            if (err2) reject(err2); else resolve(a6);
-          });
-        } else { resolve(addresses); }
-      });
-    });
-    for (const addr of addrs) { if (isPrivateHost(addr)) return false; }
-  } catch { /* DNS lookup failed — proceed */ }
-  return true;
-}
+// ── SSRF protection lives in src/lib/ssrf.ts ─────────────────────
+// Shared with the uptime prober: IP-literal normalization (decimal/hex/short
+// forms, IPv4-mapped IPv6), a port allowlist and fail-closed DNS resolution.
+// The scanner still words the reason honestly for the visitor.
 
 // ── Issue Builder ────────────────────────────────────────────────────
 
@@ -123,8 +77,13 @@ export const scanWebsite = action({
     if (!["http:", "https:"].includes(parsedUrl.protocol)) {
       throw new Error("Only HTTP and HTTPS URLs are supported.");
     }
-    if (!(await isUrlSafe(parsedUrl.href))) {
-      throw new Error("This URL points to a private or restricted address and cannot be scanned.");
+    const safety = await checkUrlSafety(parsedUrl.href);
+    if (!safety.ok) {
+      throw new Error(
+        safety.reason === "dns"
+          ? "Could not resolve this domain name. Please verify the URL and try again."
+          : "This URL points to a private or restricted address and cannot be scanned.",
+      );
     }
 
     // 2. Tracking
@@ -165,7 +124,8 @@ export const scanWebsite = action({
       timeoutMs: 12_000,
       maxBytes: 5 * 1024 * 1024,
       assertSafe: async (candidate) => {
-        if (!(await isUrlSafe(candidate))) {
+        const hop = await checkUrlSafety(candidate);
+        if (!hop.ok) {
           throw new Error("Redirect target is a private or restricted address.");
         }
       },

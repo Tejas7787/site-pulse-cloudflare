@@ -9,12 +9,15 @@
  */
 
 import type * as aiAssistant from "../aiAssistant.js";
+import type * as alerts from "../alerts.js";
 import type * as analytics from "../analytics.js";
 import type * as auth from "../auth.js";
 import type * as auth_emailOtp from "../auth/emailOtp.js";
 import type * as crons from "../crons.js";
 import type * as feedback from "../feedback.js";
 import type * as http from "../http.js";
+import type * as monitors from "../monitors.js";
+import type * as probe from "../probe.js";
 import type * as rateLimit from "../rateLimit.js";
 import type * as retention from "../retention.js";
 import type * as scan from "../scan.js";
@@ -29,12 +32,15 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   aiAssistant: typeof aiAssistant;
+  alerts: typeof alerts;
   analytics: typeof analytics;
   auth: typeof auth;
   "auth/emailOtp": typeof auth_emailOtp;
   crons: typeof crons;
   feedback: typeof feedback;
   http: typeof http;
+  monitors: typeof monitors;
+  probe: typeof probe;
   rateLimit: typeof rateLimit;
   retention: typeof retention;
   scan: typeof scan;

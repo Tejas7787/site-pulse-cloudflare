@@ -123,6 +123,22 @@ const siteIdentityValidator = v.object({
   organizationName: v.optional(v.string()),
 });
 
+// ── Phase 2: automatic uptime monitoring ─────────────────────────────────────
+// Three outcome states a probe can produce, plus the config-error state.
+const probeResultValidator = v.union(
+  v.literal("ok"),
+  v.literal("down"),
+  v.literal("blocked"), // bot wall / auth wall / rate limit: not evidence of downtime
+  v.literal("error"),   // invalid or unsafe URL: a config problem, not downtime
+);
+
+const monitorStateValidator = v.union(
+  v.literal("up"),
+  v.literal("suspect"), // one failed check, awaiting confirmation
+  v.literal("down"),
+  v.literal("unknown"), // created but nothing verified yet
+);
+
 const schema = defineSchema(
   {
     ...authTables,
@@ -260,6 +276,89 @@ const schema = defineSchema(
       count: v.number(), // requests consumed inside this window
     }).index("by_key", ["key"])
       .index("by_window_start", ["windowStart"]),
+
+    // A website the owner wants watched on a recurring schedule. Probing runs
+    // entirely server-side (crons.ts → monitors.dispatchDue → probe.probe);
+    // no browser needs to be open. Interval and per-owner caps live in
+    // src/lib/monitoring.ts.
+    monitors: defineTable({
+      ownerId: v.id("users"),
+      name: v.string(),
+      url: v.string(),
+      host: v.string(),
+      intervalMs: v.number(),
+      status: v.union(v.literal("active"), v.literal("paused")),
+      state: monitorStateValidator,
+      /** When the dispatcher should consider this monitor due next. */
+      nextCheckAt: v.number(),
+      lastDispatchedAt: v.optional(v.number()),
+      lastCheckedAt: v.optional(v.number()),
+      lastResult: v.optional(probeResultValidator),
+      lastHttpStatus: v.optional(v.number()),
+      lastDurationMs: v.optional(v.number()),
+      consecutiveFailures: v.number(),
+      consecutiveSuccesses: v.number(),
+      /** Where alerts go; falls back to the owner's account email. */
+      alertEmail: v.optional(v.string()),
+      createdAt: v.number(),
+      pausedAt: v.optional(v.number()),
+    })
+      .index("by_owner", ["ownerId", "createdAt"])
+      .index("by_due", ["status", "nextCheckAt"]),
+
+    // One row per scheduled probe. The 30-day sweep (retention.ts) is what
+    // keeps this table — the bulk of Phase 2's writes — bounded.
+    uptimeChecks: defineTable({
+      monitorId: v.id("monitors"),
+      checkedAt: v.number(),
+      /** Dispatch time of the probe that produced this row (ordering key). */
+      dispatchedAt: v.number(),
+      result: probeResultValidator,
+      httpStatus: v.optional(v.number()),
+      durationMs: v.optional(v.number()),
+      /** Stable detail string: "timeout", "http-503", "blocked", … */
+      detail: v.optional(v.string()),
+      attempt: v.number(),
+    })
+      .index("by_monitor_checked", ["monitorId", "checkedAt"])
+      .index("by_checked_at", ["checkedAt"]),
+
+    // A confirmed outage: opened only after FAILURES_TO_DECLARE_DOWN
+    // consecutive failed checks, closed after SUCCESSES_TO_RECOVER successes.
+    incidents: defineTable({
+      monitorId: v.id("monitors"),
+      kind: v.union(v.literal("down")),
+      open: v.boolean(),
+      openedAt: v.number(),
+      closedAt: v.optional(v.number()),
+      recoveredAt: v.optional(v.number()),
+      reason: v.string(),
+      failureCount: v.number(),
+      /** Set once the outage email for this incident has been enqueued. */
+      alertedAt: v.optional(v.number()),
+      recoveryAlertedAt: v.optional(v.number()),
+    })
+      .index("by_monitor_open", ["monitorId", "open", "openedAt"])
+      .index("by_opened_at", ["openedAt"]),
+
+    // Outbox for downtime/recovery emails: written first (idempotently), then
+    // sent by an action — a side effect Convex never auto-retries for us.
+    alertDeliveries: defineTable({
+      monitorId: v.id("monitors"),
+      incidentId: v.id("incidents"),
+      kind: v.union(v.literal("downtime"), v.literal("recovery")),
+      to: v.string(),
+      subject: v.string(),
+      text: v.string(),
+      status: v.union(v.literal("queued"), v.literal("sent"), v.literal("failed")),
+      createdAt: v.number(),
+      sentAt: v.optional(v.number()),
+      providerId: v.optional(v.string()),
+      error: v.optional(v.string()),
+    })
+      .index("by_incident_kind", ["incidentId", "kind"])
+      .index("by_status_created", ["status", "createdAt"])
+      .index("by_created", ["createdAt"]),
   },
   { schemaValidation: false },
 );

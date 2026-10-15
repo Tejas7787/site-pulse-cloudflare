@@ -1,7 +1,7 @@
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useAuth } from "@/hooks/use-auth";
-import { LayoutDashboard, LogOut } from "lucide-react";
+import { Activity, LogOut } from "lucide-react";
 import { useNavigate } from "react-router";
 
 export default function Dashboard() {
@@ -39,14 +39,24 @@ export default function Dashboard() {
         <Card className="border-border/70 shadow-none">
           <CardHeader>
             <div className="mb-3 flex size-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
-              <LayoutDashboard className="size-5" />
+              <Activity className="size-5" />
             </div>
-            <CardTitle>Your dashboard is ready</CardTitle>
+            <CardTitle>Uptime monitoring</CardTitle>
           </CardHeader>
-          <CardContent className="text-sm leading-6 text-muted-foreground">
-            Replace this starter content with the product&apos;s authenticated
-            experience. The route is protected and sign-in returns here by
-            default.
+          <CardContent className="flex flex-col gap-4 text-sm leading-6 text-muted-foreground">
+            <p>
+              Watch your websites around the clock. SitePulse checks each
+              monitor from its own servers on your schedule, records uptime
+              history, opens an incident only after two consecutive failed
+              checks, and emails you on downtime and recovery.
+            </p>
+            <Button
+              type="button"
+              className="gap-2 self-start"
+              onClick={() => navigate("/monitors")}
+            >
+              <Activity className="size-4" /> Open monitors
+            </Button>
           </CardContent>
         </Card>
       </div>
