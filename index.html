@@ -29,11 +29,14 @@
   <meta name="twitter:image" content="https://sitepulse.freebuff.app/logo.svg" />
   <meta name="theme-color" content="#FFFBF0" />
   <!-- Security: CSP via meta tag (only CSP is valid per the HTML spec via meta http-equiv).
+       frame-ancestors is IGNORED when delivered via <meta http-equiv>, so it is deliberately
+       absent here and delivered only as a real HTTP response header by the hosting layer
+       (vercel.json, public/_headers, vite.config.ts — see tests/cspConsistency.test.ts).
        Other security headers (X-Frame-Options, X-Content-Type-Options, Referrer-Policy,
-       Permissions-Policy, HSTS, X-Permitted-Cross-Domain-Policies) must be delivered as
-       HTTP response headers by the server/CDN layer. -->
+       Permissions-Policy, HSTS, X-Permitted-Cross-Domain-Policies) must likewise be
+       delivered as HTTP response headers by the server/CDN layer. -->
   <meta http-equiv="Content-Security-Policy"
-    content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.convex.cloud; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data: https://fonts.gstatic.com; connect-src 'self' https://*.convex.cloud wss://*.convex.cloud; base-uri 'self'; form-action 'self'; frame-ancestors 'none'" />
+    content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.convex.cloud; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data: https://fonts.gstatic.com; connect-src 'self' https://*.convex.cloud wss://*.convex.cloud; base-uri 'self'; form-action 'self'" />
 </head>
 
 
@@ -55,6 +58,14 @@
       <a href="mailto:sitepulse@freebuff.app" style="color: #555; text-decoration: underline; margin: 0 0.5rem;">Contact</a>
     </footer>
   </div>
+  <!-- Freebuff preview screenshot bridge (the platform injects @vly-ai/integrations into
+       this page) loads html2canvas-pro from cdn.jsdelivr.net, which this page's script-src
+       correctly blocks. This local, sha256-pinned copy (npm html2canvas-pro@2.0.4, MIT,
+       byte-identical to the CDN artifact) defines window.html2canvas during parsing, before
+       any module runs, so the bridge's loader short-circuits and never requests the CDN.
+       Classic script, no defer/async: it must execute before the deferred module graph
+       (including the platform's injected module script). -->
+  <script src="/vendor/html2canvas-pro-2.0.4.min.js"></script>
   <script type="module" src="/src/main.tsx"></script>
 </body>
 
