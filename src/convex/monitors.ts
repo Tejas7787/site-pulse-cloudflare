@@ -187,12 +187,22 @@ export const getMonitor = query({
       .order("desc")
       .take(50);
     const owner = await ctx.db.get(monitor.ownerId);
+    const openDelivery = await ctx.db.query("alertDeliveries")
+      .withIndex("by_incident_kind", (q) =>
+        q.eq("incidentId", (monitor._id as unknown) as Id<"incidents">),
+      )
+      .order("desc")
+      .first();
+    const deliveryStatus = openDelivery
+      ? { count: 1, status: openDelivery.status, deliveredAt: openDelivery.sentAt }
+      : null;
     return {
       monitor,
       checks,
       incidents,
       availability: availabilityPercent(checks.map((c) => c.result)),
       alertDestination: monitor.alertEmail ?? owner?.email ?? null,
+      alertDelivery: deliveryStatus,
     };
   },
 });

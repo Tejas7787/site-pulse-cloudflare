@@ -326,9 +326,38 @@ export default function Monitors() {
                             <div className="text-sm font-medium">
                               {detail.alertDestination ?? "no alert recipient"}
                             </div>
-                            <div className="text-xs text-muted-foreground">alert email</div>
+                            <div className="text-xs text-muted-foreground">
+                              alert email
+                            </div>
                           </div>
                         </div>
+
+                        {detail.alertDestination === null ? (
+                          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                            <Mail className="size-3.5" />
+                            <span>No alert email is configured for this monitor.</span>
+                          </div>
+                        ) : (
+                          <div className="flex flex-wrap items-center gap-6">
+                            <div>
+                              <div className="text-lg font-bold">
+                                {detail.alertDestination}
+                              </div>
+                              <div className="text-xs text-muted-foreground">
+                                Alert email
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2 rounded-lg border border-border/70 bg-muted/30 px-3 py-2">
+                              <Mail className="size-3.5" />
+                              <span className="text-sm font-medium">
+                                {detail.alertDestination}
+                              </span>
+                              <span className="text-xs text-muted-foreground">
+                                will receive downtime/recovery alerts
+                              </span>
+                            </div>
+                          </div>
+                        )}
 
                         {detail.checks.length > 0 && (
                           <div>
