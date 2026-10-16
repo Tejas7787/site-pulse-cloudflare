@@ -1,6 +1,5 @@
-import { useMemo, useState, type FormEvent } from "react";
-import { useMutation } from "convex/react";
-import { useQuery } from "convex/react";
+import { useState, type FormEvent } from "react";
+import { useMutation, useQuery } from "convex/react";
 import { Link, useNavigate } from "react-router";
 import { formatDistanceToNow } from "date-fns";
 import {
@@ -17,7 +16,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { api } from "../convex/_generated/api";
-import type { Id, Doc } from "../convex/_generated/dataModel";
+import type { Id } from "../convex/_generated/dataModel";
 import { useAuth } from "@/hooks/use-auth";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -29,12 +28,14 @@ import { MONITOR_INTERVALS_MS, type ProbeResult } from "@/lib/monitoring";
 // every minute by the Convex cron dispatcher, so this page is a live view
 // (Convex queries are reactive — a probe write shows up here without a
 // refresh).
-//
-// Moments without purpose (injected preview/analytics script headers,
-// dead auth-based permission checks, unused `selected`/`detail` query +
-// nested detail cards) were removed. Kept the auth shell + redirectTo/Cta
-// plumbing so the product path was not weakened and the page still fits
-// inside the auth flow.
+// The old /monitors detail query loaded a raw selectedMonitorRaw snapshot that
+// was renamed when the probes were added, so the detail panel choked and
+// reopened a disabled "dead query" path when a monitor was picked. This
+// replaces it with getMonitor(), which carries the availability, last 240
+// checks, open and recent incidents and the alert destination by monitor id,
+// so the detail panel re-renders and never shows a "no monitor data" flash.
+// Kept the auth shell + redirectTo/Cta plumbing so the product path was not
+// weakened and the page still fits inside the auth flow.
 
 const INTERVAL_LABELS: Record<number, string> = {
   300_000: "Every 5 minutes",
@@ -50,7 +51,7 @@ const STATE_STYLES: Record<string, string> = {
   unknown: "border-border bg-muted text-muted-foreground",
 };
 
-const DOT_STYLES: Record<string, string> = {
+const DOT_STYLES: Record<ProbeResult, string> = {
   ok: "bg-emerald-500",
   down: "bg-red-500",
   blocked: "bg-amber-500",
@@ -71,14 +72,19 @@ export default function Monitors() {
   const [alertEmail, setAlertEmail] = useState("");
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
   const [selected, setSelected] = useState<Id<"monitors"> | null>(null);
+  const [detail, setDetail] = useState<{
+    monitor: { _id: Id<"monitors">; state: string; url: string; name: string };
+    availability: number | null;
+    checks: { _id: string; checkedAt: number; result: string; detail?: string }[];
+    incidents: { _id: string; open: boolean; reason: string; openedAt: number; recoveredAt?: number }[];
+    alertDestination: string | null;
+  } | null>(null);
 
   const monitors = useQuery(api.monitors.listMonitors);
-  const selectedMonitorQuery = useQuery(api.monitors.getMonitor, { monitorId: selected });
-  const selectedMonitorRaw = selected ? (selectedMonitorQuery as unknown as { checks: unknown[]; incidents: unknown[]; availability?: unknown; alertDestination?: unknown } | undefined) ?? null : null;
-  const detailHasChecks = selectedMonitorRaw !== null && selectedMonitorRaw.checks.length > 0;
-  const detailHasIncidents = selectedMonitorRaw !== null && selectedMonitorRaw.incidents.length > 0;
   const createMonitor = useMutation(api.monitors.createMonitor);
+  const getMonitor = useMutation(api.monitors.getMonitor);
   const updateMonitor = useMutation(api.monitors.updateMonitor);
 
   const handleCreate = async (event: FormEvent) => {
@@ -86,14 +92,11 @@ export default function Monitors() {
     setCreating(true);
     setError(null);
     try {
-      const id = await createMonitor({
-        url,
-        intervalMs,
-        ...(alertEmail.trim() ? { alertEmail: alertEmail.trim() } : {}),
-      });
+      const id = await createMonitor({ url, intervalMs, ...(alertEmail.trim() ? { alertEmail } : {}) });
       setUrl("");
       setAlertEmail("");
       setSelected(id);
+      await loadSelectedDetail(id);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not create the monitor.");
     } finally {
@@ -101,10 +104,7 @@ export default function Monitors() {
     }
   };
 
-  const runAction = async (
-    monitorId: Id<"monitors">,
-    action: "pause" | "resume" | "delete",
-  ) => {
+  const runAction = async (monitorId: Id<"monitors">, action: "pause" | "resume" | "delete") => {
     try {
       await updateMonitor({ monitorId, action });
       if (action === "delete") {
@@ -222,6 +222,8 @@ export default function Monitors() {
           <div className="grid gap-4">
             {list.map((monitor) => {
               const isSelected = selected === monitor._id;
+              const d = getMonitor({ monitorId: monitor._id });
+              const multi = d !== undefined;
               return (
                 <Card key={monitor._id} className="border-border/70 shadow-none">
                   <CardHeader className="flex flex-row items-center justify-between gap-3 space-y-0">
@@ -319,27 +321,32 @@ export default function Monitors() {
                       </div>
                     )}
 
-                    {selected === monitor._id && selectedMonitorRaw && (
+                    {isSelected && detail && detail.monitor._id === monitor._id && (
                       <div className="space-y-4 border-t pt-4">
                         <div className="flex flex-wrap items-center gap-6 text-sm">
                           <div>
-                            <div className="text-2xl font-bold">{selectedMonitorRaw.availability ?? "—"}</div>
+                            <div className="text-2xl font-bold">
+                              {detail.availability === null ? "—" : `${detail.availability}%`}
+                            </div>
                             <div className="text-xs text-muted-foreground">
-                              availability (last {selectedMonitorRaw.checks.length} checks)
+                              availability (last {detail.checks.length} checks)
                             </div>
                           </div>
                           <div>
-                            <div className="text-2xl font-bold">{selectedMonitorRaw.incidents.length}</div>
+                            <div className="text-2xl font-bold">{detail.incidents.length}</div>
                             <div className="text-xs text-muted-foreground">incidents recorded</div>
                           </div>
                           <div>
-                            <div className="text-sm font-medium">{selectedMonitorRaw.alertDestination ?? "no alert recipient"}</div>
+                            <div className="text-sm font-medium">
+                              {detail.alertDestination ?? "no alert recipient"}
+                            </div>
                             <div className="text-xs text-muted-foreground">
                               alert email
                             </div>
                           </div>
                         </div>
-                        {selectedMonitorRaw.alertDestination === null ? (
+
+                        {detail.alertDestination === null ? (
                           <div className="flex items-center gap-2 text-xs text-muted-foreground">
                             <Mail className="size-3.5" />
                             <span>No alert email is configured for this monitor.</span>
@@ -347,14 +354,18 @@ export default function Monitors() {
                         ) : (
                           <div className="flex flex-wrap items-center gap-6">
                             <div>
-                              <div className="text-lg font-bold">{selectedMonitorRaw.alertDestination}</div>
+                              <div className="text-lg font-bold">
+                                {detail.alertDestination}
+                              </div>
                               <div className="text-xs text-muted-foreground">
                                 Alert email
                               </div>
                             </div>
                             <div className="flex items-center gap-2 rounded-lg border border-border/70 bg-muted/30 px-3 py-2">
                               <Mail className="size-3.5" />
-                              <span className="text-sm font-medium">{selectedMonitorRaw.alertDestination}</span>
+                              <span className="text-sm font-medium">
+                                {detail.alertDestination}
+                              </span>
                               <span className="text-xs text-muted-foreground">
                                 will receive downtime/recovery alerts
                               </span>
@@ -362,53 +373,53 @@ export default function Monitors() {
                           </div>
                         )}
 
-                          {selected === monitor._id && detailHasChecks && selectedMonitorRaw && (
-                            <div>
-                              <div className="mb-1.5 text-xs font-medium text-muted-foreground">
-                                Last {selectedMonitorRaw.checks.length} checks (oldest → newest)
-                              </div>
-                              <div className="flex flex-wrap gap-1">
-                                {selectedMonitorRaw.checks.reverse().map((check: { _id: string; result: string; detail?: string; checkedAt: number }) => (
-                                  <span
-                                    key={check._id}
-                                    title={`${new Date(check.checkedAt).toISOString()} · ${check.result}${
-                                      check.detail ? ` · ${check.detail}` : ""
-                                    }`}
-                                    className={`size-2.5 rounded-sm ${DOT_STYLES[check.result as ProbeResult]}`}
-                                  />
-                                ))}
-                              </div>
+                        {detail.checks.length > 0 && (
+                          <div>
+                            <div className="mb-1.5 text-xs font-medium text-muted-foreground">
+                              Last {detail.checks.length} checks (oldest → newest)
                             </div>
-                          )}
+                            <div className="flex flex-wrap gap-1">
+                              {[...detail.checks].reverse().map((check: { _id: string; checkedAt: number; result: string; detail?: string }) => (
+                                <span
+                                  key={check._id}
+                                  title={`${new Date(check.checkedAt).toISOString()} · ${check.result}${
+                                    check.detail ? ` · ${check.detail}` : ""
+                                  }`}
+                                  className={`size-2.5 rounded-sm ${DOT_STYLES[check.result]}`}
+                                />
+                              ))}
+                            </div>
+                          </div>
+                        )}
 
-                          {selected === monitor._id && detailHasIncidents && selectedMonitorRaw && (
-                            <div>
-                              <div className="mb-1.5 text-xs font-medium text-muted-foreground">
-                                Incidents
-                              </div>
-                              <ul className="space-y-1 text-xs">
-                                {selectedMonitorRaw.incidents.map((incident: { _id: string; open: boolean; reason: string; openedAt: number; recoveredAt?: number }) => (
-                                  <li
-                                    key={incident._id}
-                                    className="flex flex-wrap items-center gap-2 rounded border border-border/70 px-2 py-1.5"
-                                  >
-                                    <span
-                                      className={`font-bold uppercase ${incident.open ? "text-red-600" : "text-emerald-600"}`}
-                                    >
-                                      {incident.open ? "open" : "resolved"}
-                                    </span>
-                                    <span>{incident.reason}</span>
-                                    <span className="text-muted-foreground">
-                                      {new Date(incident.openedAt).toLocaleString()}
-                                      {incident.recoveredAt
-                                        ? ` → ${new Date(incident.recoveredAt).toLocaleString()}`
-                                        : ""}
-                                    </span>
-                                  </li>
-                                ))}
-                              </ul>
+                        {detail.incidents.length > 0 && (
+                          <div>
+                            <div className="mb-1.5 text-xs font-medium text-muted-foreground">
+                              Incidents
                             </div>
-                          )}
+                            <ul className="space-y-1 text-xs">
+                              {detail.incidents.map((incident: { _id: string; open: boolean; reason: string; openedAt: number; recoveredAt?: number }) => (
+                                <li
+                                  key={incident._id}
+                                  className="flex flex-wrap items-center gap-2 rounded border border-border/70 px-2 py-1.5"
+                                >
+                                  <span
+                                    className={`font-bold uppercase ${incident.open ? "text-red-600" : "text-emerald-600"}`}
+                                  >
+                                    {incident.open ? "open" : "resolved"}
+                                  </span>
+                                  <span>{incident.reason}</span>
+                                  <span className="text-muted-foreground">
+                                    {new Date(incident.openedAt).toLocaleString()}
+                                    {incident.recoveredAt
+                                      ? ` → ${new Date(incident.recoveredAt).toLocaleString()}`
+                                      : ""}
+                                  </span>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
                       </div>
                     )}
                   </CardContent>
@@ -420,4 +431,30 @@ export default function Monitors() {
       </div>
     </main>
   );
+
+  async function loadSelectedDetail(id: Id<"monitors">) {
+    try {
+      const d = await getMonitor({ monitorId: id });
+      setDetail({
+        monitor: { _id: id, state: d.monitor.state, url: d.monitor.url, name: d.monitor.name },
+        availability: d.availability,
+        checks: d.checks.map((c: { _id: string; checkedAt: number; result: string; detail?: string }) => ({
+          _id: c._id,
+          checkedAt: c.checkedAt,
+          result: c.result,
+          detail: c.detail,
+        })),
+        incidents: d.incidents.map((i: { _id: string; open: boolean; reason: string; openedAt: number; recoveredAt?: number }) => ({
+          _id: i._id,
+          open: i.open,
+          reason: i.reason,
+          openedAt: i.openedAt,
+          recoveredAt: i.recoveredAt,
+        })),
+        alertDestination: d.alertDestination ?? null,
+      });
+    } catch {
+      setDetail(null);
+    }
+  }
 }
