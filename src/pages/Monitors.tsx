@@ -1,5 +1,6 @@
-import { useState, type FormEvent } from "react";
-import { useMutation, useQuery } from "convex/react";
+import { useMemo, useState, type FormEvent } from "react";
+import { useMutation } from "convex/react";
+import { useQuery } from "convex/react";
 import { Link, useNavigate } from "react-router";
 import { formatDistanceToNow } from "date-fns";
 import {
@@ -16,7 +17,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { api } from "../convex/_generated/api";
-import type { Id } from "../convex/_generated/dataModel";
+import type { Id, Doc } from "../convex/_generated/dataModel";
 import { useAuth } from "@/hooks/use-auth";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -34,16 +35,6 @@ import { MONITOR_INTERVALS_MS, type ProbeResult } from "@/lib/monitoring";
 // nested detail cards) were removed. Kept the auth shell + redirectTo/Cta
 // plumbing so the product path was not weakened and the page still fits
 // inside the auth flow.
-
-/** Shape returned by `api.monitors.getMonitor` from `src/convex/monitors.ts`. */
-interface MonitorsGetMonitor {
-  monitor: { _id: string };
-  checks: Array<{ _id: string; result: string; detail?: string; checkedAt: number }>;
-  incidents: Array<{ _id: string; open: boolean; reason: string; openedAt: number; recoveredAt?: number }>;
-  availability: number | null;
-  alertDestination: string | null;
-  alertDelivery: { count: number; status: string; deliveredAt: number } | null;
-}
 
 const INTERVAL_LABELS: Record<number, string> = {
   300_000: "Every 5 minutes",
@@ -83,7 +74,8 @@ export default function Monitors() {
   const [selected, setSelected] = useState<Id<"monitors"> | null>(null);
 
   const monitors = useQuery(api.monitors.listMonitors);
-  const selectedMonitorRaw = selected ? (useQuery(api.monitors.getMonitor, { monitorId: selected }) ?? null) : null;
+  const selectedMonitorQuery = useQuery(api.monitors.getMonitor, { monitorId: selected });
+  const selectedMonitorRaw = selected ? (selectedMonitorQuery as unknown as { checks: unknown[]; incidents: unknown[]; availability?: unknown; alertDestination?: unknown } | undefined) ?? null : null;
   const detailHasChecks = selectedMonitorRaw !== null && selectedMonitorRaw.checks.length > 0;
   const detailHasIncidents = selectedMonitorRaw !== null && selectedMonitorRaw.incidents.length > 0;
   const createMonitor = useMutation(api.monitors.createMonitor);

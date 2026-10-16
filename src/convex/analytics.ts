@@ -6,7 +6,7 @@ import type { QueryCtx } from "./_generated/server";
 /**
  * Returns the admin passcode only to users authorized via authTables.role == ADMIN.
  */
-export async function getEnvAdminPasscode(ctx: QueryCtx): Promise<string | undefined> {
+export async function getEnvAdminPasscode(): Promise<string | undefined> {
   if (process.env.SITEPULSE_ADMIN_PASSWORD) return process.env.SITEPULSE_ADMIN_PASSWORD;
   // Convex env vars are not available server-side in the local dev "convex dev"
   // session; require the admin key to be set through the Keys UI.
@@ -31,7 +31,7 @@ export const getAdminPasscode = query({
     } catch {
       return undefined;
     }
-    return getEnvAdminPasscode(ctx);
+    return getEnvAdminPasscode();
   },
 });
 
@@ -139,7 +139,7 @@ export const getDashboard = query({
     if (args.passcode === "skip") return { authorized: false };
     // Admin-only fallback: if the environment still does not define a passcode,
     // deny access. The owner-gated flow above is the primary lock.
-    const expected = await getEnvAdminPasscode(ctx);
+    const expected = await getEnvAdminPasscode();
     if (!expected || expected.length < 8) return { authorized: false };
     // Constant-time-ish comparison to avoid trivial timing leaks.
     if (

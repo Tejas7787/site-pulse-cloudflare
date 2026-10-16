@@ -41,7 +41,7 @@ function resolveRedirectAfterAuth(
     typeof returnTo === "string" &&
     returnTo.startsWith("/") &&
     !returnTo.startsWith("//") &&
-    !returnTo.includes("/\./") &&
+    !returnTo.includes("/./.") &&
     !returnTo.includes("../") &&
     !returnTo.includes(String.fromCharCode(92)) &&
     !returnTo.includes("?") &&

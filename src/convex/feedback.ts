@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { getAuthUserId } from "@convex-dev/auth/server";
-import { internal } from "./_generated/api";
+
 import type { QueryCtx } from "./_generated/server";
 
 /**
@@ -14,7 +14,7 @@ import type { QueryCtx } from "./_generated/server";
  * inside Convex with the auth identity attached, and it requires that the
  * signed-in user's record in authTables has role == ADMIN.
  */
-export async function getEnvAdminPasscode(ctx: QueryCtx): Promise<string | undefined> {
+export async function getEnvAdminPasscode(): Promise<string | undefined> {
   if (process.env.SITEPULSE_ADMIN_PASSWORD) return process.env.SITEPULSE_ADMIN_PASSWORD;
   // Convex env vars are not available server-side in the local dev "convex dev"
   // session; require the admin key to be set through the Keys UI.
@@ -31,7 +31,7 @@ export const getAdminPasscode = query({
     } catch {
       return undefined;
     }
-    return getEnvAdminPasscode(ctx);
+    return getEnvAdminPasscode();
   },
 });
 
