@@ -187,23 +187,20 @@ export const getMonitor = query({
       .order("desc")
       .take(50);
     const owner = await ctx.db.get(monitor.ownerId);
+
     // The delivery outbox is joined through incidents: an alert is enqueued
-    // only when an incident is opened, so the monitor->incident relationship is
-    // derived here instead of casting monitor._id to Id<"incidents">.
+    // only when an incident is opened, so derive the monitor->incident
+    // relationship here instead of casting monitor._id to Id<"incidents">.
     const openIncident = await ctx.db
       .query("incidents")
       .withIndex("by_monitor_open", (q) =>
         q.eq("monitorId", monitor._id).eq("open", true),
       )
       .first();
+
     const openDelivery = await ctx.db.query("alertDeliveries")
       .withIndex("by_incident_kind", (q) =>
-        q.eq(
-          "incidentId",
-          openIncident === null || openIncident === undefined
-            ? ""
-            : (openIncident._id as unknown) as Id<"incidents">,
-        ),
+        q.eq("incidentId", openIncident?._id as Id<"incidents">),
       )
       .order("desc")
       .first();

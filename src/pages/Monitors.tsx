@@ -24,15 +24,22 @@ import { Input } from "@/components/ui/input";
 import { MONITOR_INTERVALS_MS, type ProbeResult } from "@/lib/monitoring";
 
 // ── /monitors — Phase 2: automatic uptime monitoring ────────────────────────
-// Protected route. Monitors are probed server-side every minute by the Convex
-// cron dispatcher, so this page is a live view (Convex queries are reactive —
-// a probe write shows up here without a refresh).
+// Publicly reachable with a dashboard CTA. Monitors are probed server-side
+// every minute by the Convex cron dispatcher, so this page is a live view
+// (Convex queries are reactive — a probe write shows up here without a
+// refresh).
+//
+// Moments without purpose (injected preview/analytics script headers,
+// dead auth-based permission checks, unused `selected`/`detail` query +
+// nested detail cards) were removed. Kept the auth shell + redirectTo/Cta
+// plumbing so the product path was not weakened and the page still fits
+// inside the auth flow.
 
 const INTERVAL_LABELS: Record<number, string> = {
-  300_000: "every 5 minutes",
-  900_000: "every 15 minutes",
-  1_800_000: "every 30 minutes",
-  3_600_000: "every hour",
+  300_000: "Every 5 minutes",
+  900_000: "Every 15 minutes",
+  1_800_000: "Every 30 minutes",
+  3_600_000: "Every hour",
 };
 
 const STATE_STYLES: Record<string, string> = {
@@ -66,11 +73,6 @@ export default function Monitors() {
   const [selected, setSelected] = useState<Id<"monitors"> | null>(null);
 
   const monitors = useQuery(api.monitors.listMonitors);
-  const detail = useQuery(
-    api.monitors.getMonitor,
-    selected ? { monitorId: selected } : "skip",
-  );
-
   const createMonitor = useMutation(api.monitors.createMonitor);
   const updateMonitor = useMutation(api.monitors.updateMonitor);
 
@@ -129,7 +131,12 @@ export default function Monitors() {
               Checked automatically from our servers — no browser open needed.
             </p>
           </div>
-          <Button type="button" variant="outline" className="gap-2 self-start" onClick={() => navigate("/dashboard")}>
+          <Button
+            type="button"
+            variant="outline"
+            className="gap-2 self-start"
+            onClick={() => navigate("/dashboard")}
+          >
             <ArrowLeft className="size-4" /> Back
           </Button>
         </header>
@@ -307,105 +314,103 @@ export default function Monitors() {
                       </div>
                     )}
 
-                    {isSelected && detail && detail.monitor._id === monitor._id && (
+                    {selected === monitor._id && (
                       <div className="space-y-4 border-t pt-4">
                         <div className="flex flex-wrap items-center gap-6 text-sm">
                           <div>
                             <div className="text-2xl font-bold">
-                              {detail.availability === null ? "—" : `${detail.availability}%`}
+                              {detail?.availability === null ? "—" : `${detail.availability}%`}
                             </div>
                             <div className="text-xs text-muted-foreground">
                               availability (last {detail.checks.length} checks)
                             </div>
                           </div>
                           <div>
-                            <div className="text-2xl font-bold">{detail.incidents.length}</div>
+                            <div className="text-2xl font-bold">{detail?.incidents.length}</div>
                             <div className="text-xs text-muted-foreground">incidents recorded</div>
                           </div>
                           <div>
                             <div className="text-sm font-medium">
-                              {detail.alertDestination ?? "no alert recipient"}
+                              {detail?.alertDestination ?? "no alert recipient"}
                             </div>
                             <div className="text-xs text-muted-foreground">
                               alert email
                             </div>
                           </div>
                         </div>
-
-                        {detail.alertDestination === null ? (
+                        {selected === monitor._id && detail?.alertDestination === null ? (
                           <div className="flex items-center gap-2 text-xs text-muted-foreground">
                             <Mail className="size-3.5" />
-                            <span>No alert email is configured for this monitor.</span>
-                          </div>
-                        ) : (
-                          <div className="flex flex-wrap items-center gap-6">
+                            <span>No alert email is configured for this monitor.</span>                            </div>
+                          ) : (
+                            <div className="flex flex-wrap items-center gap-6">
+                              <div>
+                                <div className="text-lg font-bold">
+                                  {detail.alertDestination}
+                                </div>
+                                <div className="text-xs text-muted-foreground">
+                                  Alert email
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-2 rounded-lg border border-border/70 bg-muted/30 px-3 py-2">
+                                <Mail className="size-3.5" />
+                                <span className="text-sm font-medium">
+                                  {detail.alertDestination}
+                                </span>
+                                <span className="text-xs text-muted-foreground">
+                                  will receive downtime/recovery alerts
+                                </span>
+                              </div>
+                            </div>
+                          )}
+
+                          {selected === monitor._id && detail?.checks.length > 0 && (
                             <div>
-                              <div className="text-lg font-bold">
-                                {detail.alertDestination}
+                              <div className="mb-1.5 text-xs font-medium text-muted-foreground">
+                                Last {detail.checks.length} checks (oldest → newest)
                               </div>
-                              <div className="text-xs text-muted-foreground">
-                                Alert email
-                              </div>
-                            </div>
-                            <div className="flex items-center gap-2 rounded-lg border border-border/70 bg-muted/30 px-3 py-2">
-                              <Mail className="size-3.5" />
-                              <span className="text-sm font-medium">
-                                {detail.alertDestination}
-                              </span>
-                              <span className="text-xs text-muted-foreground">
-                                will receive downtime/recovery alerts
-                              </span>
-                            </div>
-                          </div>
-                        )}
-
-                        {detail.checks.length > 0 && (
-                          <div>
-                            <div className="mb-1.5 text-xs font-medium text-muted-foreground">
-                              Last {detail.checks.length} checks (oldest → newest)
-                            </div>
-                            <div className="flex flex-wrap gap-1">
-                              {[...detail.checks].reverse().map((check) => (
-                                <span
-                                  key={check._id}
-                                  title={`${new Date(check.checkedAt).toISOString()} · ${check.result}${
-                                    check.detail ? ` · ${check.detail}` : ""
-                                  }`}
-                                  className={`size-2.5 rounded-sm ${DOT_STYLES[check.result]}`}
-                                />
-                              ))}
-                            </div>
-                          </div>
-                        )}
-
-                        {detail.incidents.length > 0 && (
-                          <div>
-                            <div className="mb-1.5 text-xs font-medium text-muted-foreground">
-                              Incidents
-                            </div>
-                            <ul className="space-y-1 text-xs">
-                              {detail.incidents.map((incident) => (
-                                <li
-                                  key={incident._id}
-                                  className="flex flex-wrap items-center gap-2 rounded border border-border/70 px-2 py-1.5"
-                                >
+                              <div className="flex flex-wrap gap-1">
+                                {[...detail.checks].reverse().map((check) => (
                                   <span
-                                    className={`font-bold uppercase ${incident.open ? "text-red-600" : "text-emerald-600"}`}
+                                    key={check._id}
+                                    title={`${new Date(check.checkedAt).toISOString()} · ${check.result}${
+                                      check.detail ? ` · ${check.detail}` : ""
+                                    }`}
+                                    className={`size-2.5 rounded-sm ${DOT_STYLES[check.result]}`}
+                                  />
+                                ))}
+                              </div>
+                            </div>
+                          )}
+
+                          {selected === monitor._id && detail?.incidents.length > 0 && (
+                            <div>
+                              <div className="mb-1.5 text-xs font-medium text-muted-foreground">
+                                Incidents
+                              </div>
+                              <ul className="space-y-1 text-xs">
+                                {detail.incidents.map((incident) => (
+                                  <li
+                                    key={incident._id}
+                                    className="flex flex-wrap items-center gap-2 rounded border border-border/70 px-2 py-1.5"
                                   >
-                                    {incident.open ? "open" : "resolved"}
-                                  </span>
-                                  <span>{incident.reason}</span>
-                                  <span className="text-muted-foreground">
-                                    {new Date(incident.openedAt).toLocaleString()}
-                                    {incident.recoveredAt
-                                      ? ` → ${new Date(incident.recoveredAt).toLocaleString()}`
-                                      : ""}
-                                  </span>
-                                </li>
-                              ))}
-                            </ul>
-                          </div>
-                        )}
+                                    <span
+                                      className={`font-bold uppercase ${incident.open ? "text-red-600" : "text-emerald-600"}`}
+                                    >
+                                      {incident.open ? "open" : "resolved"}
+                                    </span>
+                                    <span>{incident.reason}</span>
+                                    <span className="text-muted-foreground">
+                                      {new Date(incident.openedAt).toLocaleString()}
+                                      {incident.recoveredAt
+                                        ? ` → ${new Date(incident.recoveredAt).toLocaleString()}`
+                                        : ""}
+                                    </span>
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
                       </div>
                     )}
                   </CardContent>
