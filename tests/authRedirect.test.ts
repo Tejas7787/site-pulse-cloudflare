@@ -5,7 +5,11 @@
 // path (src/lib/redirects.ts) — everything else falls back to /dashboard.
 
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "fs";
+import { join } from "path";
 import { resolveRedirectAfterAuth } from "../src/lib/redirects";
+
+const read = (rel: string) => readFileSync(join(import.meta.dir, "..", rel), "utf8");
 
 describe("returnTo allowlist — same-origin plain paths pass", () => {
   test("accepts app paths, including the default destinations", () => {
@@ -79,5 +83,36 @@ describe("returnTo allowlist — traversal and query/fragment tricks are rejecte
     // RequireAuth preserves location.search, so search-bearing paths land on
     // the fallback by design — documented here as the intended strictness.
     expect(resolveRedirectAfterAuth("/monitors?tab=1")).toBe("/dashboard");
+  });
+});
+
+// The homepage once shipped without any Sign In entry point, so signed-out
+// visitors had no way to reach /auth except by typing the URL. These tests
+// pin the full chain: homepage header → /auth → /dashboard (Monitoring).
+describe("sign-in entry point and post-login destination wiring", () => {
+  test("homepage header exposes a Sign In link to /auth", () => {
+    const landing = read("src/pages/Landing.tsx");
+    expect(landing).toContain('to={isAuthenticated ? "/dashboard" : "/auth"}');
+    // The link label is a JSX ternary: "Sign In" for visitors, "Dashboard"
+    // once authenticated (so signed-in users skip re-auth).
+    expect(landing).toContain('{isAuthenticated ? "Dashboard" : "Sign In"}');
+  });
+
+  test("the /auth route mounts AuthPage with redirectAfterAuth=/dashboard", () => {
+    const main = read("src/main.tsx");
+    const authIdx = main.indexOf('path="/auth"');
+    expect(authIdx).toBeGreaterThan(-1);
+    const authBlock = main.slice(authIdx, authIdx + 200);
+    expect(authBlock).toContain('redirectAfterAuth="/dashboard"');
+  });
+
+  test("the post-login dashboard is auth-gated and offers Monitoring", () => {
+    const main = read("src/main.tsx");
+    const dashIdx = main.indexOf('path="/dashboard"');
+    expect(dashIdx).toBeGreaterThan(-1);
+    expect(main.slice(dashIdx, dashIdx + 200)).toContain("<RequireAuth>");
+    // Dashboard itself links to /monitors (pinned further in monitoring.test.ts).
+    const dashboard = read("src/pages/Dashboard.tsx");
+    expect(dashboard).toContain('to="/monitors"');
   });
 });

@@ -7,9 +7,10 @@ import { addScanToHistory, getScanHistory, clearScanHistory, domainFromUrl, form
 import { ScoreTrend } from "../components/ScoreTrend";
 import { dedupeIssues } from "../lib/recommendations";
 import { honestQuickWinGains } from "../lib/scoring";
-import { History, Trash2 } from "lucide-react";
+import { History, LogIn, Trash2 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useNavigate, Link } from "react-router";
+import { useAuth } from "@/hooks/use-auth";
 import {
   Shield,
   Search,
@@ -182,6 +183,9 @@ export default function Landing() {
   const scanWebsite = useAction(api.scan.scanWebsite);
   const saveScan = useMutation(api.scans.saveScan);
   const navigate = useNavigate();
+  // Only used to pick the header's account entry point: signed-out visitors
+  // get "Sign In" (/auth); signed-in users jump straight to the workspace.
+  const { isAuthenticated } = useAuth();
   const resultsRef = useRef<HTMLDivElement>(null);
 
   const handleScan = async () => {
@@ -264,6 +268,15 @@ export default function Landing() {
             <span className="text-xl font-black tracking-tight">SitePulse</span>
           </div>
           <div className="flex items-center gap-4">
+            {/* Account entry point — the one route signed-out visitors need.
+                Auth.tsx forwards to /dashboard (with Monitoring) after login. */}
+            <Link
+              to={isAuthenticated ? "/dashboard" : "/auth"}
+              className="inline-flex items-center gap-1.5 border-2 border-[#1a1a1a] bg-[#FDE68A] px-3 py-1.5 text-xs font-bold shadow-[3px_3px_0px_0px_#1a1a1a] transition-all hover:bg-[#FCD34D] hover:shadow-[1px_1px_0px_0px_#1a1a1a] hover:translate-x-[2px] hover:translate-y-[2px]"
+            >
+              <LogIn className="size-3.5" aria-hidden="true" />
+              {isAuthenticated ? "Dashboard" : "Sign In"}
+            </Link>
             {history.length > 0 && (
               <button onClick={() => { if (result) { setResult(null); setScanId(null); } setTimeout(() => document.getElementById('scan-history')?.scrollIntoView({ behavior: 'smooth' }), 50); }} className="inline-flex items-center gap-1.5 border-2 border-[#1a1a1a] bg-white px-3 py-1.5 text-xs font-bold transition-colors hover:bg-[#E0E7FF]" aria-label="View scan history">
                 <History className="size-3.5" aria-hidden="true" />History {history.length > 0 && <span className="ml-0.5 border border-[#1a1a1a]/20 bg-[#FFFBF0] px-1.5 py-0.5 text-[10px] font-black">{history.length}</span>}
