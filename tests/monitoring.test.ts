@@ -246,3 +246,40 @@ describe("scheduler wiring", () => {
     expect(alerts).not.toContain("RESEND_API_KEY=");
   });
 });
+
+// The live site once served a stale bundle whose route table had no
+// /monitors entry, so deep links hit the catch-all 404 and the dashboard had
+// no Monitoring entry point. These tests pin the wiring so a regression is
+// caught in CI instead of on production.
+describe("monitoring navigation wiring", () => {
+  test("router registers /monitors behind RequireAuth, before the catch-all", () => {
+    const main = read("src/main.tsx");
+    const routeIdx = main.indexOf('path="/monitors"');
+    expect(routeIdx).toBeGreaterThan(-1);
+    // The route element must be wrapped in RequireAuth…
+    const routeBlock = main.slice(routeIdx, routeIdx + 250);
+    expect(routeBlock).toContain("<RequireAuth>");
+    expect(routeBlock).toContain("<Monitors />");
+    // …and the catch-all 404 must come after it, or /monitors would 404.
+    expect(main.indexOf('path="*"')).toBeGreaterThan(routeIdx);
+    // The Monitors page is lazy-loaded like every other route.
+    expect(main).toContain('lazy(() => import("./pages/Monitors.tsx"))');
+  });
+
+  test("logged-in dashboard exposes a Monitoring option that opens /monitors", () => {
+    const dashboard = read("src/pages/Dashboard.tsx");
+    // Header nav entry…
+    expect(dashboard).toContain('to="/monitors"');
+    expect(dashboard).toMatch(/>\s*Monitoring\s*</);
+    // …and the feature card's call-to-action.
+    expect(dashboard).toContain('navigate("/monitors")');
+  });
+
+  test("host rewrites unknown paths to index.html so deep links reach the SPA", () => {
+    // Netlify / Cloudflare Pages (_redirects) and the Vite dev/preview server
+    // (appType: 'spa' is Vite's default) must both fall back to index.html,
+    // otherwise a direct visit to /monitors never boots the app at all.
+    const redirects = read("public/_redirects");
+    expect(redirects).toContain("/*    /index.html   200");
+  });
+});
