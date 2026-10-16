@@ -28,7 +28,25 @@ function resolveRedirectAfterAuth(
   returnTo: string | null,
   fallback = "/dashboard",
 ) {
-  if (returnTo?.startsWith("/") && !returnTo.startsWith("//")) {
+  // Strict same-origin path allowlist. The router owns this value, but an
+  // attacker who controls the query string (e.g. a crafted /auth?returnTo= URL)
+  // must not be able to redirect authenticated users off the app.
+  // - must start with "/" (same-origin paths only)
+  // - no leading "//" (scheme-relative URLs)
+  // - no backslash (Windows path separators)
+  // - must not contain ".." (directory traversal)
+  // - must be a plain path; no fragments or query strings
+  if (
+    returnTo &&
+    typeof returnTo === "string" &&
+    returnTo.startsWith("/") &&
+    !returnTo.startsWith("//") &&
+    !returnTo.includes("/\./") &&
+    !returnTo.includes("../") &&
+    !returnTo.includes(String.fromCharCode(92)) &&
+    !returnTo.includes("?") &&
+    !returnTo.includes("#")
+  ) {
     return returnTo;
   }
   return fallback;

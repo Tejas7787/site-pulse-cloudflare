@@ -35,6 +35,16 @@ import { MONITOR_INTERVALS_MS, type ProbeResult } from "@/lib/monitoring";
 // plumbing so the product path was not weakened and the page still fits
 // inside the auth flow.
 
+/** Shape returned by `api.monitors.getMonitor` from `src/convex/monitors.ts`. */
+interface MonitorsGetMonitor {
+  monitor: { _id: string };
+  checks: Array<{ _id: string; result: string; detail?: string; checkedAt: number }>;
+  incidents: Array<{ _id: string; open: boolean; reason: string; openedAt: number; recoveredAt?: number }>;
+  availability: number | null;
+  alertDestination: string | null;
+  alertDelivery: { count: number; status: string; deliveredAt: number } | null;
+}
+
 const INTERVAL_LABELS: Record<number, string> = {
   300_000: "Every 5 minutes",
   900_000: "Every 15 minutes",
@@ -49,7 +59,7 @@ const STATE_STYLES: Record<string, string> = {
   unknown: "border-border bg-muted text-muted-foreground",
 };
 
-const DOT_STYLES: Record<ProbeResult, string> = {
+const DOT_STYLES: Record<string, string> = {
   ok: "bg-emerald-500",
   down: "bg-red-500",
   blocked: "bg-amber-500",
@@ -73,12 +83,9 @@ export default function Monitors() {
   const [selected, setSelected] = useState<Id<"monitors"> | null>(null);
 
   const monitors = useQuery(api.monitors.listMonitors);
-  const selectedMonitor = selected ? useQuery(api.monitors.getMonitor, { monitorId: selected }) : null;
-  const detailIsReady = selectedMonitor !== null;
-  const detailChecks: MonitorsGetMonitor["checks"] = detailIsReady ? selectedMonitor.checks : [];
-  const detailIncidents: MonitorsGetMonitor["incidents"] = detailIsReady ? selectedMonitor.incidents : [];
-  const detailHasChecks = detailIsReady && selectedMonitor.checks.length > 0;
-  const detailHasIncidents = detailIsReady && selectedMonitor.incidents.length > 0;
+  const selectedMonitorRaw = selected ? (useQuery(api.monitors.getMonitor, { monitorId: selected }) ?? null) : null;
+  const detailHasChecks = selectedMonitorRaw !== null && selectedMonitorRaw.checks.length > 0;
+  const detailHasIncidents = selectedMonitorRaw !== null && selectedMonitorRaw.incidents.length > 0;
   const createMonitor = useMutation(api.monitors.createMonitor);
   const updateMonitor = useMutation(api.monitors.updateMonitor);
 
@@ -320,82 +327,75 @@ export default function Monitors() {
                       </div>
                     )}
 
-                    {selected === monitor._id && (
+                    {selected === monitor._id && selectedMonitorRaw && (
                       <div className="space-y-4 border-t pt-4">
                         <div className="flex flex-wrap items-center gap-6 text-sm">
                           <div>
-                            <div className="text-2xl font-bold">
-                              {selectedMonitor ? (selectedMonitor.availability ?? "-") : "—"}
-                            </div>
+                            <div className="text-2xl font-bold">{selectedMonitorRaw.availability ?? "—"}</div>
                             <div className="text-xs text-muted-foreground">
-                              availability (last {selectedMonitor ? selectedMonitor.checks.length : 0} checks)
+                              availability (last {selectedMonitorRaw.checks.length} checks)
                             </div>
                           </div>
                           <div>
-                            <div className="text-2xl font-bold">{selectedMonitor ? selectedMonitor.incidents.length : 0}</div>
+                            <div className="text-2xl font-bold">{selectedMonitorRaw.incidents.length}</div>
                             <div className="text-xs text-muted-foreground">incidents recorded</div>
                           </div>
                           <div>
-                            <div className="text-sm font-medium">
-                              {selectedMonitor ? (selectedMonitor.alertDestination ?? "no alert recipient") : "no alert recipient"}
-                            </div>
+                            <div className="text-sm font-medium">{selectedMonitorRaw.alertDestination ?? "no alert recipient"}</div>
                             <div className="text-xs text-muted-foreground">
                               alert email
                             </div>
                           </div>
                         </div>
-                        {selected === monitor._id && selectedMonitor?.alertDestination === null ? (
+                        {selectedMonitorRaw.alertDestination === null ? (
                           <div className="flex items-center gap-2 text-xs text-muted-foreground">
                             <Mail className="size-3.5" />
-                            <span>No alert email is configured for this monitor.</span>                            </div>
-                          ) : (
-                            <div className="flex flex-wrap items-center gap-6">
-                              <div>
-                                <div className="text-lg font-bold">
-                                  {selectedMonitor?.alertDestination}
-                                </div>
-                                <div className="text-xs text-muted-foreground">
-                                  Alert email
-                                </div>
-                              </div>
-                              <div className="flex items-center gap-2 rounded-lg border border-border/70 bg-muted/30 px-3 py-2">
-                                <Mail className="size-3.5" />
-                                <span className="text-sm font-medium">
-                                  {selectedMonitor?.alertDestination}
-                                </span>
-                                <span className="text-xs text-muted-foreground">
-                                  will receive downtime/recovery alerts
-                                </span>
+                            <span>No alert email is configured for this monitor.</span>
+                          </div>
+                        ) : (
+                          <div className="flex flex-wrap items-center gap-6">
+                            <div>
+                              <div className="text-lg font-bold">{selectedMonitorRaw.alertDestination}</div>
+                              <div className="text-xs text-muted-foreground">
+                                Alert email
                               </div>
                             </div>
-                          )}
+                            <div className="flex items-center gap-2 rounded-lg border border-border/70 bg-muted/30 px-3 py-2">
+                              <Mail className="size-3.5" />
+                              <span className="text-sm font-medium">{selectedMonitorRaw.alertDestination}</span>
+                              <span className="text-xs text-muted-foreground">
+                                will receive downtime/recovery alerts
+                              </span>
+                            </div>
+                          </div>
+                        )}
 
-                          {selected === monitor._id && detailHasChecks && (
+                          {selected === monitor._id && detailHasChecks && selectedMonitorRaw && (
                             <div>
                               <div className="mb-1.5 text-xs font-medium text-muted-foreground">
-                                Last {detailChecks.length} checks (oldest → newest)
+                                Last {selectedMonitorRaw.checks.length} checks (oldest → newest)
                               </div>
                               <div className="flex flex-wrap gap-1">
-                                {detailChecks.reverse().map((check) => (
+                                {selectedMonitorRaw.checks.reverse().map((check: { _id: string; result: string; detail?: string; checkedAt: number }) => (
                                   <span
                                     key={check._id}
                                     title={`${new Date(check.checkedAt).toISOString()} · ${check.result}${
                                       check.detail ? ` · ${check.detail}` : ""
                                     }`}
-                                    className={`size-2.5 rounded-sm ${DOT_STYLES[check.result]}`}
+                                    className={`size-2.5 rounded-sm ${DOT_STYLES[check.result as ProbeResult]}`}
                                   />
                                 ))}
                               </div>
                             </div>
                           )}
 
-                          {selected === monitor._id && detailHasIncidents && (
+                          {selected === monitor._id && detailHasIncidents && selectedMonitorRaw && (
                             <div>
                               <div className="mb-1.5 text-xs font-medium text-muted-foreground">
                                 Incidents
                               </div>
                               <ul className="space-y-1 text-xs">
-                                {detailIncidents.map((incident) => (
+                                {selectedMonitorRaw.incidents.map((incident: { _id: string; open: boolean; reason: string; openedAt: number; recoveredAt?: number }) => (
                                   <li
                                     key={incident._id}
                                     className="flex flex-wrap items-center gap-2 rounded border border-border/70 px-2 py-1.5"
