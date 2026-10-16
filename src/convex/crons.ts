@@ -9,7 +9,7 @@ const crons = cronJobs();
 // no-op, so the steady-state cost is negligible.
 crons.interval(
   "delete expired scans",
-  { minutes: 1 },
+  { minutes: 5 },
   internal.scans.deleteExpiredScans,
   { maxDeletes: 200 },
 );
@@ -32,7 +32,7 @@ crons.interval(
 // immediate no-op.
 crons.interval(
   "dispatch due uptime monitors",
-  { minutes: 1 },
+  { minutes: 5 },
   internal.monitors.dispatchDue,
   {},
 );
