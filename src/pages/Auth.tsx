@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/input-otp";
 
 import { useAuth } from "@/hooks/use-auth";
+import { resolveRedirectAfterAuth } from "@/lib/redirects";
 import logo from "@/assets/logo.svg";
 import { ArrowRight, Loader2, Mail, UserX } from "lucide-react";
 import { Suspense, useEffect, useState } from "react";
@@ -24,33 +25,9 @@ interface AuthProps {
   redirectAfterAuth?: string;
 }
 
-function resolveRedirectAfterAuth(
-  returnTo: string | null,
-  fallback = "/dashboard",
-) {
-  // Strict same-origin path allowlist. The router owns this value, but an
-  // attacker who controls the query string (e.g. a crafted /auth?returnTo= URL)
-  // must not be able to redirect authenticated users off the app.
-  // - must start with "/" (same-origin paths only)
-  // - no leading "//" (scheme-relative URLs)
-  // - no backslash (Windows path separators)
-  // - must not contain ".." (directory traversal)
-  // - must be a plain path; no fragments or query strings
-  if (
-    returnTo &&
-    typeof returnTo === "string" &&
-    returnTo.startsWith("/") &&
-    !returnTo.startsWith("//") &&
-    !returnTo.includes("/./.") &&
-    !returnTo.includes("../") &&
-    !returnTo.includes(String.fromCharCode(92)) &&
-    !returnTo.includes("?") &&
-    !returnTo.includes("#")
-  ) {
-    return returnTo;
-  }
-  return fallback;
-}
+// The returnTo allowlist lives in src/lib/redirects.ts (pure, unit-tested:
+// tests/authRedirect.test.ts) so a crafted /auth?returnTo= URL can never
+// redirect authenticated users off the app.
 
 function Auth({ redirectAfterAuth }: AuthProps = {}) {
   const { isLoading: authLoading, isAuthenticated, signIn } = useAuth();

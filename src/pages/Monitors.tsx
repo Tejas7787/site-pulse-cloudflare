@@ -74,18 +74,19 @@ export default function Monitors() {
   const [error, setError] = useState<string | null>(null);
 
   const [selected, setSelected] = useState<Id<"monitors"> | null>(null);
-  const [detail, setDetail] = useState<{
-    monitor: { _id: Id<"monitors">; state: string; url: string; name: string };
-    availability: number | null;
-    checks: { _id: string; checkedAt: number; result: string; detail?: string }[];
-    incidents: { _id: string; open: boolean; reason: string; openedAt: number; recoveredAt?: number }[];
-    alertDestination: string | null;
-  } | null>(null);
 
   const monitors = useQuery(api.monitors.listMonitors);
   const createMonitor = useMutation(api.monitors.createMonitor);
-  const getMonitor = useMutation(api.monitors.getMonitor);
   const updateMonitor = useMutation(api.monitors.updateMonitor);
+  // Monitor detail is a reactive Convex *query* (ownership is enforced inside
+  // getMonitor in src/convex/monitors.ts): selecting a monitor subscribes to
+  // its detail, and "skip" unsubscribes when nothing is selected. It must not
+  // go through useMutation — that both mistyped the reference and fired a
+  // failing "mutation" per card on every render.
+  const detail = useQuery(
+    api.monitors.getMonitor,
+    selected ? { monitorId: selected } : "skip",
+  );
 
   const handleCreate = async (event: FormEvent) => {
     event.preventDefault();
@@ -96,7 +97,6 @@ export default function Monitors() {
       setUrl("");
       setAlertEmail("");
       setSelected(id);
-      await loadSelectedDetail(id);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not create the monitor.");
     } finally {
@@ -106,10 +106,10 @@ export default function Monitors() {
 
   const runAction = async (monitorId: Id<"monitors">, action: "pause" | "resume" | "delete") => {
     try {
+      // Drop the detail subscription before the row disappears so the
+      // reactive getMonitor query never races the delete.
+      if (action === "delete" && selected === monitorId) setSelected(null);
       await updateMonitor({ monitorId, action });
-      if (action === "delete") {
-        if (selected === monitorId) setSelected(null);
-      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Action failed.");
     }
@@ -222,8 +222,6 @@ export default function Monitors() {
           <div className="grid gap-4">
             {list.map((monitor) => {
               const isSelected = selected === monitor._id;
-              const d = getMonitor({ monitorId: monitor._id });
-              const multi = d !== undefined;
               return (
                 <Card key={monitor._id} className="border-border/70 shadow-none">
                   <CardHeader className="flex flex-row items-center justify-between gap-3 space-y-0">
@@ -379,7 +377,7 @@ export default function Monitors() {
                               Last {detail.checks.length} checks (oldest → newest)
                             </div>
                             <div className="flex flex-wrap gap-1">
-                              {[...detail.checks].reverse().map((check: { _id: string; checkedAt: number; result: string; detail?: string }) => (
+                              {[...detail.checks].reverse().map((check) => (
                                 <span
                                   key={check._id}
                                   title={`${new Date(check.checkedAt).toISOString()} · ${check.result}${
@@ -398,7 +396,7 @@ export default function Monitors() {
                               Incidents
                             </div>
                             <ul className="space-y-1 text-xs">
-                              {detail.incidents.map((incident: { _id: string; open: boolean; reason: string; openedAt: number; recoveredAt?: number }) => (
+                              {detail.incidents.map((incident) => (
                                 <li
                                   key={incident._id}
                                   className="flex flex-wrap items-center gap-2 rounded border border-border/70 px-2 py-1.5"
@@ -432,29 +430,4 @@ export default function Monitors() {
     </main>
   );
 
-  async function loadSelectedDetail(id: Id<"monitors">) {
-    try {
-      const d = await getMonitor({ monitorId: id });
-      setDetail({
-        monitor: { _id: id, state: d.monitor.state, url: d.monitor.url, name: d.monitor.name },
-        availability: d.availability,
-        checks: d.checks.map((c: { _id: string; checkedAt: number; result: string; detail?: string }) => ({
-          _id: c._id,
-          checkedAt: c.checkedAt,
-          result: c.result,
-          detail: c.detail,
-        })),
-        incidents: d.incidents.map((i: { _id: string; open: boolean; reason: string; openedAt: number; recoveredAt?: number }) => ({
-          _id: i._id,
-          open: i.open,
-          reason: i.reason,
-          openedAt: i.openedAt,
-          recoveredAt: i.recoveredAt,
-        })),
-        alertDestination: d.alertDestination ?? null,
-      });
-    } catch {
-      setDetail(null);
-    }
-  }
 }

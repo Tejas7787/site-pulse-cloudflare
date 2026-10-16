@@ -198,12 +198,19 @@ export const getMonitor = query({
       )
       .first();
 
-    const openDelivery = await ctx.db.query("alertDeliveries")
-      .withIndex("by_incident_kind", (q) =>
-        q.eq("incidentId", openIncident?._id as Id<"incidents">),
-      )
-      .order("desc")
-      .first();
+    // ONLY look up alert deliveries through this monitor's own open incident.
+    // With no open incident there is nothing to report, and an unbounded
+    // by_incident_kind query (e.g. eq("incidentId", undefined)) would scan the
+    // whole outbox and leak another account's alert status into this response.
+    const openDelivery = openIncident
+      ? await ctx.db
+          .query("alertDeliveries")
+          .withIndex("by_incident_kind", (q) =>
+            q.eq("incidentId", openIncident._id),
+          )
+          .order("desc")
+          .first()
+      : null;
     const deliveryStatus = openDelivery
       ? { count: 1, status: openDelivery.status, deliveredAt: openDelivery.sentAt }
       : null;
