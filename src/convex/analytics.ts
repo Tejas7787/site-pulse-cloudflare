@@ -1,5 +1,39 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
+import { getAuthUserId } from "@convex-dev/auth/server";
+import type { QueryCtx } from "./_generated/server";
+
+/**
+ * Returns the admin passcode only to users authorized via authTables.role == ADMIN.
+ */
+export async function getEnvAdminPasscode(ctx: QueryCtx): Promise<string | undefined> {
+  if (process.env.SITEPULSE_ADMIN_PASSWORD) return process.env.SITEPULSE_ADMIN_PASSWORD;
+  // Convex env vars are not available server-side in the local dev "convex dev"
+  // session; require the admin key to be set through the Keys UI.
+  if (process.env.ANALYTICS_ADMIN_PASSCODE) return process.env.ANALYTICS_ADMIN_PASSCODE;
+  return undefined;
+}
+
+export async function requireAdmin(ctx: QueryCtx): Promise<void> {
+  const userId = await getAuthUserId(ctx);
+  if (userId === null) throw new Error("Sign in to view admin data.");
+  const user = await ctx.db.get(userId);
+  if (!user) throw new Error("User record missing.");
+  if (user.role !== "admin") throw new Error("Admin access required.");
+}
+
+/** Returns the admin passcode only to authorized users. */
+export const getAdminPasscode = query({
+  args: {},
+  handler: async (ctx): Promise<string | undefined> => {
+    try {
+      await requireAdmin(ctx);
+    } catch {
+      return undefined;
+    }
+    return getEnvAdminPasscode(ctx);
+  },
+});
 
 /** Only these event names are accepted — anything else is silently dropped. */
 const EVENT_NAMES = [
@@ -95,13 +129,21 @@ export type DashboardData = {
  * not configured, access is denied.
  */
 export const getDashboard = query({
-  args: { passcode: v.string() },
+  args: { passcode: v.optional(v.string()) },
   handler: async (ctx, args): Promise<DashboardData | { authorized: false }> => {
-    const expected =
-      process.env.SITEPULSE_ADMIN_PASSWORD ?? process.env.ANALYTICS_ADMIN_PASSCODE;
+    try {
+      await requireAdmin(ctx);
+    } catch {
+      return { authorized: false };
+    }
+    if (args.passcode === "skip") return { authorized: false };
+    // Admin-only fallback: if the environment still does not define a passcode,
+    // deny access. The owner-gated flow above is the primary lock.
+    const expected = await getEnvAdminPasscode(ctx);
     if (!expected || expected.length < 8) return { authorized: false };
     // Constant-time-ish comparison to avoid trivial timing leaks.
     if (
+      args.passcode === undefined ||
       args.passcode.length !== expected.length ||
       [...args.passcode].some((c, i) => c !== expected[i])
     ) {

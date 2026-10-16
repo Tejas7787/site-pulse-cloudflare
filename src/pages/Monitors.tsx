@@ -73,6 +73,12 @@ export default function Monitors() {
   const [selected, setSelected] = useState<Id<"monitors"> | null>(null);
 
   const monitors = useQuery(api.monitors.listMonitors);
+  const selectedMonitor = selected ? useQuery(api.monitors.getMonitor, { monitorId: selected }) : null;
+  const detailIsReady = selectedMonitor !== null;
+  const detailChecks: MonitorsGetMonitor["checks"] = detailIsReady ? selectedMonitor.checks : [];
+  const detailIncidents: MonitorsGetMonitor["incidents"] = detailIsReady ? selectedMonitor.incidents : [];
+  const detailHasChecks = detailIsReady && selectedMonitor.checks.length > 0;
+  const detailHasIncidents = detailIsReady && selectedMonitor.incidents.length > 0;
   const createMonitor = useMutation(api.monitors.createMonitor);
   const updateMonitor = useMutation(api.monitors.updateMonitor);
 
@@ -319,26 +325,26 @@ export default function Monitors() {
                         <div className="flex flex-wrap items-center gap-6 text-sm">
                           <div>
                             <div className="text-2xl font-bold">
-                              {detail?.availability === null ? "—" : `${detail.availability}%`}
+                              {selectedMonitor ? (selectedMonitor.availability ?? "-") : "—"}
                             </div>
                             <div className="text-xs text-muted-foreground">
-                              availability (last {detail.checks.length} checks)
+                              availability (last {selectedMonitor ? selectedMonitor.checks.length : 0} checks)
                             </div>
                           </div>
                           <div>
-                            <div className="text-2xl font-bold">{detail?.incidents.length}</div>
+                            <div className="text-2xl font-bold">{selectedMonitor ? selectedMonitor.incidents.length : 0}</div>
                             <div className="text-xs text-muted-foreground">incidents recorded</div>
                           </div>
                           <div>
                             <div className="text-sm font-medium">
-                              {detail?.alertDestination ?? "no alert recipient"}
+                              {selectedMonitor ? (selectedMonitor.alertDestination ?? "no alert recipient") : "no alert recipient"}
                             </div>
                             <div className="text-xs text-muted-foreground">
                               alert email
                             </div>
                           </div>
                         </div>
-                        {selected === monitor._id && detail?.alertDestination === null ? (
+                        {selected === monitor._id && selectedMonitor?.alertDestination === null ? (
                           <div className="flex items-center gap-2 text-xs text-muted-foreground">
                             <Mail className="size-3.5" />
                             <span>No alert email is configured for this monitor.</span>                            </div>
@@ -346,7 +352,7 @@ export default function Monitors() {
                             <div className="flex flex-wrap items-center gap-6">
                               <div>
                                 <div className="text-lg font-bold">
-                                  {detail.alertDestination}
+                                  {selectedMonitor?.alertDestination}
                                 </div>
                                 <div className="text-xs text-muted-foreground">
                                   Alert email
@@ -355,7 +361,7 @@ export default function Monitors() {
                               <div className="flex items-center gap-2 rounded-lg border border-border/70 bg-muted/30 px-3 py-2">
                                 <Mail className="size-3.5" />
                                 <span className="text-sm font-medium">
-                                  {detail.alertDestination}
+                                  {selectedMonitor?.alertDestination}
                                 </span>
                                 <span className="text-xs text-muted-foreground">
                                   will receive downtime/recovery alerts
@@ -364,13 +370,13 @@ export default function Monitors() {
                             </div>
                           )}
 
-                          {selected === monitor._id && detail?.checks.length > 0 && (
+                          {selected === monitor._id && detailHasChecks && (
                             <div>
                               <div className="mb-1.5 text-xs font-medium text-muted-foreground">
-                                Last {detail.checks.length} checks (oldest → newest)
+                                Last {detailChecks.length} checks (oldest → newest)
                               </div>
                               <div className="flex flex-wrap gap-1">
-                                {[...detail.checks].reverse().map((check) => (
+                                {detailChecks.reverse().map((check) => (
                                   <span
                                     key={check._id}
                                     title={`${new Date(check.checkedAt).toISOString()} · ${check.result}${
@@ -383,13 +389,13 @@ export default function Monitors() {
                             </div>
                           )}
 
-                          {selected === monitor._id && detail?.incidents.length > 0 && (
+                          {selected === monitor._id && detailHasIncidents && (
                             <div>
                               <div className="mb-1.5 text-xs font-medium text-muted-foreground">
                                 Incidents
                               </div>
                               <ul className="space-y-1 text-xs">
-                                {detail.incidents.map((incident) => (
+                                {detailIncidents.map((incident) => (
                                   <li
                                     key={incident._id}
                                     className="flex flex-wrap items-center gap-2 rounded border border-border/70 px-2 py-1.5"
