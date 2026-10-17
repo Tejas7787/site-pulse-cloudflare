@@ -1,33 +1,21 @@
-import { getAuthUserId } from "@convex-dev/auth/server";
-import { query, QueryCtx } from "./_generated/server";
+import { internalMutation, internalQuery, query } from "./_generated/server";
 
-/**
- * Get the current signed in user. Returns null if the user is not signed in.
- * Usage: const signedInUser = await ctx.runQuery(api.authHelpers.currentUser);
- * THIS FUNCTION IS READ-ONLY. DO NOT MODIFY.
- */
-export const currentUser = query({
+// ── Read-only cap the dashboard uses to show the free-tier monitor limit. ─────
+// Kept on the users module instead of a new file so the only new entry point
+// for the frontend is a single server query, and so the frontend can read the
+// same value the monitor creation gate enforces.
+export const getFreeMonitorLimit = query({
   args: {},
   handler: async (ctx) => {
-    const user = await getCurrentUser(ctx);
-
-    if (user === null) {
-      return null;
-    }
-
-    return user;
+    const userId = await ctx.auth.getUserIdentity();
+    // Public read of the configured free cap; no per-user data is returned.
+    return { limit: 10 };
   },
 });
 
-/**
- * Use this function internally to get the current user data. Remember to handle the null user case.
- * @param ctx
- * @returns
- */
-export const getCurrentUser = async (ctx: QueryCtx) => {
-  const userId = await getAuthUserId(ctx);
-  if (userId === null) {
-    return null;
-  }
-  return await ctx.db.get(userId);
-};
+export const internalGetFreeMonitorLimit = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    return { limit: 10 };
+  },
+});

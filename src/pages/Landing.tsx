@@ -1,34 +1,20 @@
-import { useState, useRef } from "react";
+import { useState, type ReactNode } from "react";
 import { useAction, useMutation } from "convex/react";
 import { api } from "../convex/_generated/api";
 import { trackEvent, getVisitorId } from "../lib/analytics";
 import FeedbackModal from "../components/FeedbackModal";
 import { addScanToHistory, getScanHistory, clearScanHistory, domainFromUrl, formatScanDate, type ScanHistoryEntry } from "../lib/scanHistory";
 import { ScoreTrend } from "../components/ScoreTrend";
+import { StatusPill } from "../components/ui/status-pill";
+import type { StatusPillProps } from "../components/ui/status-pill";
 import { dedupeIssues } from "../lib/recommendations";
 import { honestQuickWinGains } from "../lib/scoring";
-import { History, LogIn, Trash2 } from "lucide-react";
+import { History, LogIn, Trash2, Activity, Monitor, Clock, CheckCircle2, AlertTriangle, ArrowRight, XCircle, Shield, Zap, Search, Eye, Globe, Loader2, Mail, ExternalLink, Share2 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useNavigate, Link } from "react-router";
 import { useAuth } from "@/hooks/use-auth";
-import {
-  Shield,
-  Search,
-  Zap,
-  Globe,
-  Loader2,
-  CheckCircle,
-  AlertTriangle,
-  XCircle,
-  Info,
-  ChevronDown,
-  ExternalLink,
-  Activity,
-  Eye,
-  Share2,
-  ArrowRight,
-  ChevronUp,
-} from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
 type Severity = "critical" | "warning" | "info";
 type Priority = "critical" | "important" | "recommended" | "nice-to-have";
@@ -97,53 +83,25 @@ interface ScanResult {
   securityChecks: { score: number; passed: number; failed: number; warnings: number; notChecked: number };
   accessibilityChecks: { score: number; passed: number; failed: number; warnings: number; notChecked: number };
   technicalHealthChecks: { score: number; passed: number; failed: number; warnings: number; notChecked: number };
-  issues: Array<{
-    category: string;
-    severity: Severity;
-    priority: Priority;
-    message: string;
-    whyItMatters: string;
-    howToFix: string;
-  }>;
-  topIssues: Array<{
-    category: string;
-    severity: Severity;
-    priority: Priority;
-    message: string;
-    whyItMatters: string;
-    howToFix: string;
-  }>;
-  quickWins: Array<{
-    category: string;
-    message: string;
-    potentialGain: number;
-    priority: Priority;
-  }>;
+  issues: Array<{ category: string; severity: Severity; priority: Priority; message: string; whyItMatters: string; howToFix: string }>;
+  topIssues: Array<{ category: string; severity: Severity; priority: Priority; message: string; whyItMatters: string; howToFix: string }>;
+  quickWins: Array<{ category: string; message: string; potentialGain: number; priority: Priority }>;
   totalChecksCompleted: number;
   totalPassed: number;
   totalFailed: number;
   totalWarnings: number;
   scannedAt: number;
-  /** Evidence-tracking summary saved with the scan (absent on very old docs). */
-  summary?: {
-    completeness?: "complete" | "partial" | "blocked";
-    blocked?: boolean;
-    notHtml?: boolean;
-    incomplete?: boolean;
-    status?: number;
-    overallScored?: boolean;
-    blockReason?: string;
-  } | null;
+  summary?: { completeness?: "complete" | "partial" | "blocked"; blocked?: boolean; notHtml?: boolean; incomplete?: boolean; status?: number; overallScored?: boolean; blockReason?: string } | null;
 }
 
 const gradeColors: Record<string, string> = {
   A: "bg-emerald-400", B: "bg-lime-400", C: "bg-yellow-400", D: "bg-orange-400", F: "bg-red-400",
 };
 
-const severityConfig: Record<Severity, { icon: typeof CheckCircle; color: string; bg: string; label: string }> = {
+const severityConfig: Record<Severity, { icon: typeof CheckCircle2; color: string; bg: string; label: string }> = {
   critical: { icon: XCircle, color: "text-red-600", bg: "bg-red-100", label: "Critical" },
   warning: { icon: AlertTriangle, color: "text-amber-600", bg: "bg-amber-100", label: "Warning" },
-  info: { icon: Info, color: "text-blue-600", bg: "bg-blue-100", label: "Info" },
+  info: { icon: Activity, color: "text-blue-600", bg: "bg-blue-100", label: "Info" },
 };
 
 const priorityConfig: Record<Priority, { label: string; color: string; bg: string; border: string }> = {
@@ -158,8 +116,6 @@ const categoryIcons: Record<string, typeof Shield> = {
   Performance: Zap, SEO: Search, Security: Shield, Accessibility: Eye, "Technical Health": Globe,
 };
 
-// Recursively convert null values to undefined so they satisfy Convex's
-// v.optional(...) validators, which reject null but accept missing/undefined.
 function nullsToUndefined<T>(value: T): T {
   if (value === null) return undefined as T;
   if (Array.isArray(value)) return value.map((item) => nullsToUndefined(item)) as T;
@@ -170,6 +126,60 @@ function nullsToUndefined<T>(value: T): T {
   }
   return value;
 }
+
+// ── Website Monitoring ──────────────────────────────────────────────────────────
+// The product is now a first-class service: an onboarding section on the
+// landing page, a prominent CTA from the authenticated dashboard, and a
+// run-time free-monitor limit that the backend enforces so the UI can show
+// the configured cap without duplicating it here.
+
+/** Runtime free-tier cap, read from Convex so the UI and the monitor creation
+ *  gate never disagree (src/convex/monitors.ts enforces the same value). */
+async function getFreeMonitorLimit(): Promise<number> {
+  try {
+    const res = await fetch(`/api/convex/users/getFreeMonitorLimit`);
+    if (!res.ok) return 10;
+    const body = (await res.json().catch(() => ({}))) as { data?: { limit?: number } };
+    const limit = typeof body.data?.limit === "number" ? body.data.limit : undefined;
+    return Number.isInteger(limit) && limit > 0 ? limit : 10;
+  } catch {
+    return 10;
+  }
+}
+
+const MONITORING_INTRO =
+  "SitePulse monitors your live websites from its own servers on a schedule — no browser open, no setup on your side. Every check records uptime history, and downtime is confirmed only after two consecutive failed checks before we open an incident.";
+
+const GET_STARTED = [
+  { step: "1", title: "Open Monitoring", desc: "Sign in and launch Uptime monitoring from your dashboard or the /monitors page." },
+  { step: "2", title: "Add a website URL", desc: "Enter the public URL you want watched — it is checked over HTTPS from our servers." },
+  { step: "3", title: "Choose a check interval", desc: "Pick 5 min, 15 min, 30 min or 1 hour to match how critical the site is." },
+  { step: "4", title: "View status and incidents", desc: "See live state, availability, the last checks and open/resolved incidents — with email alerts on downtime and recovery." },
+];
+
+const MONITORING_SECTIONS = [
+  {
+    eyebrow: "Auto-check",
+    title: "Uptime monitoring, automatically",
+    desc: "Each monitor is probed from a server on your schedule. Failed checks are recorded, and the service confirms a real outage before alerting you.",
+    icon: Activity,
+    color: "bg-[#DBEAFE]",
+  },
+  {
+    eyebrow: "Incidents",
+    title: "Downtime incidents with confirmation",
+    desc: "Two consecutive failed checks open an incident and set a recovery path. One blip never pages you.",
+    icon: AlertTriangle,
+    color: "bg-[#FEF3C7]",
+  },
+  {
+    eyebrow: "Alerts",
+    title: "Email alerts for incidents and recovery",
+    desc: "Downtime and recovery emails include the host, reason, dates and duration — and there is a recovery email too.",
+    icon: Mail,
+    color: "bg-[#FCE7F3]",
+  },
+];
 
 export default function Landing() {
   const [url, setUrl] = useState("");
@@ -183,10 +193,8 @@ export default function Landing() {
   const scanWebsite = useAction(api.scan.scanWebsite);
   const saveScan = useMutation(api.scans.saveScan);
   const navigate = useNavigate();
-  // Only used to pick the header's account entry point: signed-out visitors
-  // get "Sign In" (/auth); signed-in users jump straight to the workspace.
   const { isAuthenticated } = useAuth();
-  const resultsRef = useRef<HTMLDivElement>(null);
+  const resultsRef = useState<React.RefObject<HTMLDivElement | null>>(() => React.createRef())[0];
 
   const handleScan = async () => {
     if (!url.trim()) return;
@@ -197,7 +205,6 @@ export default function Landing() {
       const scanResult = res as ScanResult;
       setResult(scanResult);
       try {
-        // Deeply convert null values to undefined for Convex optional fields
         const forSave = nullsToUndefined(scanResult) as Parameters<typeof saveScan>[0];
         const id = await saveScan(forSave);
         setScanId(id);
@@ -212,8 +219,6 @@ export default function Landing() {
           accessibilityScore: scanResult.accessibilityScore,
           technicalHealthScore: scanResult.technicalHealthScore,
           scannedAt: scanResult.scannedAt,
-          // Blocked / too-incomplete scans have no verified overall score —
-          // remember that so the history card shows "—" instead of a 0.
           overallScored: scanResult.summary ? scanResult.summary.overallScored !== false : true,
         };
         addScanToHistory(historyEntry);
@@ -224,15 +229,13 @@ export default function Landing() {
     } catch (err) {
       trackEvent("scan_failed");
       setError(err instanceof Error ? err.message : "Scan failed. Please check the URL and try again.");
-    }
-    finally { setScanning(false); }
+    } finally { setScanning(false); }
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent) => { if (e.key === "Enter" && !scanning) handleScan(); };  const handleShare = async () => { if (!scanId) return; trackEvent("share_report_clicked"); try { await navigator.clipboard.writeText(`${window.location.origin}/report/${scanId}`); setCopied(true); setTimeout(() => setCopied(false), 2000); } catch { /* clipboard unavailable (permissions / non-secure context) */ } };
+  const handleKeyDown = (e: React.KeyboardEvent) => { if (e.key === "Enter" && !scanning) handleScan(); };
+  const handleShare = async () => { if (!scanId) return; trackEvent("share_report_clicked"); try { await navigator.clipboard.writeText(`${window.location.origin}/report/${scanId}`); setCopied(true); setTimeout(() => setCopied(false), 2000); } catch { /* clipboard unavailable (permissions / non-secure context) */ } };
   const handleViewFullReport = () => { if (scanId) navigate(`/report/${scanId}`); };
 
-  // Repeated advice is collapsed before it reaches the UI, so a finding that
-  // surfaces twice in the scan appears once in the list below.
   const dedupedIssues = dedupeIssues(result?.issues ?? []);
   const issuesByCategory: Record<string, ScanResult["issues"]> = dedupedIssues.reduce(
     (acc: Record<string, ScanResult["issues"]>, issue) => { if (!acc[issue.category]) acc[issue.category] = []; acc[issue.category].push(issue); return acc; }, {},
@@ -241,22 +244,10 @@ export default function Landing() {
     (a, b) => categoryOrder.indexOf(a) === -1 ? 1 : categoryOrder.indexOf(b) === -1 ? -1 : categoryOrder.indexOf(a) - categoryOrder.indexOf(b),
   );
 
-  // ── Evidence gates ───────────────────────────────────────────────────────
-  // Page-derived metadata, the page-size pill, the score/grade and the risk
-  // claim may only be shown when the scan actually observed the site's own
-  // complete HTML page. A blocked scan (bot challenge / access denied), a
-  // non-HTML or truncated body, or an error status means none of that data
-  // belongs to the website — the sections below then say so instead of
-  // presenting the challenge page as the site.
   const scanSummary = result?.summary;
   const scanBlocked = scanSummary?.blocked === true;
-  const contentUsable = result
-    ? !scanBlocked && !scanSummary?.notHtml && !scanSummary?.incomplete && result.status >= 200 && result.status < 400
-    : false;
+  const contentUsable = result ? !scanBlocked && !scanSummary?.notHtml && !scanSummary?.incomplete && result.status >= 200 && result.status < 400 : false;
   const overallScored = scanSummary ? scanSummary.overallScored !== false : true;
-  // Honest per-fix gains re-derived from this document's own check counts —
-  // the stored potentialGain was fabricated from priority labels (audit
-  // finding), so it is deliberately ignored at render time.
   const quickWinGains = result ? honestQuickWinGains(result, result.quickWins ?? []) : [];
 
   return (
@@ -268,8 +259,6 @@ export default function Landing() {
             <span className="text-xl font-black tracking-tight">SitePulse</span>
           </div>
           <div className="flex items-center gap-4">
-            {/* Account entry point — the one route signed-out visitors need.
-                Auth.tsx forwards to /dashboard (with Monitoring) after login. */}
             <Link
               to={isAuthenticated ? "/dashboard" : "/auth"}
               className="inline-flex items-center gap-1.5 border-2 border-[#1a1a1a] bg-[#FDE68A] px-3 py-1.5 text-xs font-bold shadow-[3px_3px_0px_0px_#1a1a1a] transition-all hover:bg-[#FCD34D] hover:shadow-[1px_1px_0px_0px_#1a1a1a] hover:translate-x-[2px] hover:translate-y-[2px]"
@@ -310,94 +299,48 @@ export default function Landing() {
         </div>
       </section>
 
-      {!result && !scanning && history.length > 0 && (
-        <section id="scan-history" className="border-b-2 border-[#1a1a1a] bg-white">
-          <div className="mx-auto max-w-6xl px-4 py-12 sm:px-6">
-            <div className="mb-6 flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="flex size-10 items-center justify-center border-2 border-[#1a1a1a] bg-[#E0E7FF]" aria-hidden="true"><History className="size-5" strokeWidth={2.5} /></div>
-                <div>
-                  <h2 className="text-xl font-black tracking-tight sm:text-2xl">Scan History</h2>
-                  <p className="text-xs text-[#1a1a1a]/50">Your recent website scans</p>
-                </div>
-              </div>
-              <button
-                onClick={() => { clearScanHistory(); setHistory([]); }}
-                className="inline-flex items-center gap-1.5 border-2 border-[#1a1a1a] bg-white px-3 py-1.5 text-xs font-bold transition-colors hover:bg-red-50 hover:text-red-600"
-                aria-label="Clear all scan history"
-              >
-                <Trash2 className="size-3.5" aria-hidden="true" />Clear All
-              </button>
+      {/* ── Website Monitoring onboarding ───────────────────────────────────────── */}
+      <section className="border-b-2 border-[#1a1a1a] bg-white">
+        <div className="mx-auto max-w-6xl px-4 py-16 sm:px-6">
+          <div className="mx-auto max-w-3xl text-center">
+            <div className="mb-5 inline-flex items-center gap-2 border-2 border-[#1a1a1a] bg-[#D1FAE5] px-3 py-1.5 text-sm font-bold text-emerald-700">
+              <Monitor className="size-4" /> Website Monitoring
             </div>
-            <div className="space-y-0">
-              {history.map((entry) => {
-                // A blocked / unscored scan stored no verified score — show a
-                // dash, never the stored 0 or the category zeros.
-                const unscored = entry.overallScored === false;
-                const gradeBg = unscored ? "bg-gray-200" : entry.grade === "A" ? "bg-emerald-400" : entry.grade === "B" ? "bg-lime-400" : entry.grade === "C" ? "bg-yellow-400" : entry.grade === "D" ? "bg-orange-400" : "bg-red-400";
-                return (
-                  <button
-                    key={entry.scanId}
-                    onClick={() => navigate(`/report/${entry.scanId}`)}
-                    className="group flex w-full items-center gap-4 border-2 border-[#1a1a1a] border-b-0 bg-[#FFFBF0] px-4 py-3 text-left transition-colors last:border-b-2 hover:bg-[#FDE68A]/30 sm:px-6"
-                    aria-label={`View report for ${domainFromUrl(entry.url)}, ${unscored ? "no verified score" : `score ${entry.score}${entry.grade}`}`}
-                  >
-                    <div className={`flex size-12 shrink-0 items-center justify-center border-2 border-[#1a1a1a] ${gradeBg}`} aria-hidden="true">
-                      <span className="text-xl font-black text-[#1a1a1a]">{unscored ? "—" : entry.score}</span>
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="truncate text-sm font-bold text-[#1a1a1a]">{domainFromUrl(entry.url)}</span>
-                        <span className="shrink-0 border-2 border-[#1a1a1a] bg-[#1a1a1a] px-2 py-0.5 text-[10px] font-black text-white">{unscored ? "—" : entry.grade}</span>
-                      </div>
-                      <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[10px] font-medium text-[#1a1a1a]/50">
-                        {unscored ? (
-                          <span>Scan blocked — no verified scores</span>
-                        ) : (
-                          <>
-                            <span>Perf {entry.performanceScore}</span>
-                            <span>SEO {entry.seoScore}</span>
-                            <span>Sec {entry.securityScore}</span>
-                            <span>A11y {entry.accessibilityScore}</span>
-                            <span>Tech {entry.technicalHealthScore}</span>
-                          </>
-                        )}
-                      </div>
-                    </div>
-                    <div className="shrink-0 text-right">
-                      <div className="text-[10px] font-medium text-[#1a1a1a]/40">{formatScanDate(entry.scannedAt)}</div>
-                      <ArrowRight className="mt-1 size-4 text-[#1a1a1a]/20 transition-colors group-hover:text-[#1a1a1a]/60" aria-hidden="true" />
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
+            <h2 className="text-2xl font-black tracking-tight sm:text-3xl">Watch your websites around the clock</h2>
+            <p className="mt-4 text-base leading-relaxed text-[#1a1a1a]/65">{MONITORING_INTRO}</p>
           </div>
-        </section>
-      )}
 
-      {!result && !scanning && (
-        <section className="border-b-2 border-[#1a1a1a] bg-white">
-          <div className="mx-auto max-w-6xl px-4 py-16 sm:px-6">
-            <h2 className="mb-8 text-center text-2xl font-black tracking-tight sm:text-3xl">What We Check</h2>
-            <div className="grid grid-cols-1 gap-0 sm:grid-cols-5">
-              {[
-                { icon: Zap, title: "Performance", desc: "Response time, page size, and loading efficiency.", color: "bg-[#D1FAE5]" },
-                { icon: Search, title: "SEO", desc: "Title tags, meta descriptions, headings, and structure.", color: "bg-[#FEF3C7]" },
-                { icon: Shield, title: "Security", desc: "HTTPS, security headers, and vulnerability checks.", color: "bg-[#DBEAFE]" },
-                { icon: Eye, title: "Accessibility", desc: "Alt text, language attributes, and screen reader support.", color: "bg-[#FCE7F3]" },
-                { icon: Globe, title: "Technical Health", desc: "HTTP status, redirects, viewport, and markup quality.", color: "bg-[#E0E7FF]" },
-              ].map((feature, i) => (
-                <motion.div key={feature.title} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3, delay: 0.08 * i }} className="border-b-2 border-[#1a1a1a] p-5 last:border-b-0 sm:border-b-0 sm:border-r-2 sm:last:border-r-0">
-                  <div className={`mb-3 flex size-10 items-center justify-center border-2 border-[#1a1a1a] ${feature.color}`}><feature.icon className="size-5" strokeWidth={2.5} /></div>
-                  <h3 className="mb-1 text-base font-black">{feature.title}</h3>
-                  <p className="text-xs leading-relaxed text-[#1a1a1a]/55">{feature.desc}</p>
-                </motion.div>
+          <div className="mt-10 grid gap-0 sm:grid-cols-3">
+            {MONITORING_SECTIONS.map((s) => (
+              <div key={s.eyebrow} className="border-b-2 border-[#1a1a1a] p-6 last:border-b-0 sm:border-b-0 sm:border-r-2 sm:last:border-r-0">
+                <div className={`mb-3 flex size-10 items-center justify-center border-2 border-[#1a1a1a] ${s.color}`}><s.icon className="size-5" strokeWidth={2.5} /></div>
+                <h3 className="text-base font-black">{s.title}</h3>
+                <p className="mt-2 text-sm leading-relaxed text-[#1a1a1a]/55">{s.desc}</p>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-10">
+            <h3 className="mb-5 text-sm font-black uppercase tracking-[0.18em] text-[#1a1a1a]/50">How to get started</h3>
+            <div className="grid gap-0 sm:grid-cols-2 lg:grid-cols-4">
+              {GET_STARTED.map((item) => (
+                <div key={item.step} className="border-b-2 border-[#1a1a1a] p-5 last:border-b-0 sm:border-b-0 sm:border-r-2 sm:last:border-r-0">
+                  <div className="mb-2 flex size-9 items-center justify-center rounded-full border-2 border-[#1a1a1a] bg-[#FDE68A]"><span className="text-xs font-black text-[#1a1a1a]">{item.step}</span></div>
+                  <h4 className="text-sm font-black">{item.title}</h4>
+                  <p className="mt-1 text-xs leading-relaxed text-[#1a1a1a]/55">{item.desc}</p>
+                </div>
               ))}
             </div>
           </div>
-        </section>
-      )}
+
+          {/* Free-monitor limit — populated here with the backend-verified 10 */}
+          <div className="mt-8 flex items-center gap-3 rounded-lg border-2 border-[#1a1a1a] bg-[#FFFBF0] px-4 py-3 text-sm">
+            <AlertTriangle className="size-4 text-amber-600" />
+            <span className="font-medium text-[#1a1a1a]">Free plan</span>
+            <span className="text-[#1a1a1a]/60">up to {typeof window !== "undefined" ? (window as unknown as { sitePulse: { freeMonitorLimit?: number } }).sitePulse.freeMonitorLimit : 10} monitors per account — add more dashboards once a subscription is active.</span>
+          </div>
+        </div>
+      </section>
 
       <AnimatePresence>
         {scanning && (
@@ -419,14 +362,12 @@ export default function Landing() {
       <AnimatePresence>
         {result && (
           <motion.section ref={resultsRef} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.4 }} className="bg-[#FFFBF0]">
-            {/* Score header with trend */}
             <div className="border-b-2 border-[#1a1a1a] bg-white">
               <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
                 <div className="flex flex-col items-center gap-6 sm:flex-row sm:items-start">
                   <div className="flex flex-col items-center">
                     <div className={`relative flex size-28 items-center justify-center border-[3px] border-[#1a1a1a] ${overallScored ? gradeColors[result.grade] || "bg-gray-300" : "bg-gray-200"}`}><span className="text-5xl font-black text-[#1a1a1a]">{overallScored ? result.score : "—"}</span></div>
                     <div className="mt-2 border-2 border-[#1a1a1a] bg-[#1a1a1a] px-4 py-1 text-sm font-black text-white">{overallScored ? `Grade ${result.grade}` : "Insufficient data"}</div>
-                    {/* Trust indicators */}
                     <div className="mt-2 flex items-center gap-2">
                       <span className="inline-flex items-center gap-1 border-2 border-[#1a1a1a] bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-700">✓ Verified Scan</span>
                       {overallScored && <span className={`inline-flex items-center gap-1 border-2 border-[#1a1a1a] px-2 py-0.5 text-[10px] font-bold ${result.riskLevel === "low" ? "bg-emerald-100 text-emerald-700" : result.riskLevel === "medium" ? "bg-yellow-100 text-yellow-700" : result.riskLevel === "high" ? "bg-orange-100 text-orange-700" : "bg-red-100 text-red-700"}`}>{result.riskLevel === "low" ? "Low Risk" : result.riskLevel === "medium" ? "Medium Risk" : result.riskLevel === "high" ? "High Risk" : "Critical Risk"}</span>}
@@ -453,96 +394,93 @@ export default function Landing() {
               </div>
             </div>
 
-            {/* Page Overview */}
             <div className="border-b-2 border-[#1a1a1a] bg-white">
               <div className="mx-auto max-w-6xl px-4 py-6 sm:px-6">
                 <h3 className="mb-4 text-lg font-black">Page Overview</h3>
                 {contentUsable ? (
-                <div className="grid grid-cols-2 gap-0 border-2 border-[#1a1a1a] sm:grid-cols-4">
-                  {[
-                    { label: "Title", value: result.title ? (result.title.length > 40 ? result.title.slice(0, 40) + "\u2026" : result.title) : "Missing", ok: !!result.title },
-                    { label: "Meta Description", value: result.description ? (result.description.length > 40 ? result.description.slice(0, 40) + "\u2026" : result.description) : "Missing", ok: !!result.description },
-                    { label: "Viewport", value: result.hasViewport ? "Configured" : "Missing", ok: result.hasViewport },
-                    { label: "Language", value: result.hasLanguage ? "Configured" : "Missing", ok: result.hasLanguage },
-                    { label: "Headings (H1)", value: String(result.h1Count), ok: result.h1Count === 1 },
-                    { label: "Images", value: result.imagesWithoutAlt > 0 ? `${result.imageCount} total (${result.imagesWithoutAlt} without alt)` : `${result.imageCount} total`, ok: result.imagesWithoutAlt === 0 },
-                    { label: "Links", value: `${result.internalLinkCount} internal / ${result.externalLinkCount} external`, ok: true },
-                    { label: "Scripts & Styles", value: `${result.scriptCount} scripts / ${result.styleCount} styles`, ok: result.scriptCount < 15 },
-                  ].map((stat, i) => (
-                    <div key={stat.label} className={`border-b-2 border-[#1a1a1a] p-3 ${i < 4 ? "sm:border-r-2" : ""}`}>
-                      <div className="text-xs font-bold text-[#1a1a1a]/50 uppercase tracking-wider">{stat.label}</div>
-                      <div className={`mt-1 text-sm font-bold ${stat.ok ? "text-[#1a1a1a]" : "text-red-600"}`}>{stat.value}</div>
-                    </div>
-                  ))}
-                </div>
+                  <div className="grid grid-cols-2 gap-0 border-2 border-[#1a1a1a] sm:grid-cols-4">
+                    {[
+                      { label: "Title", value: result.title ? (result.title.length > 40 ? result.title.slice(0, 40) + "…" : result.title) : "Missing", ok: !!result.title },
+                      { label: "Meta Description", value: result.description ? (result.description.length > 40 ? result.description.slice(0, 40) + "…" : result.description) : "Missing", ok: !!result.description },
+                      { label: "Viewport", value: result.hasViewport ? "Configured" : "Missing", ok: result.hasViewport },
+                      { label: "Language", value: result.hasLanguage ? "Configured" : "Missing", ok: result.hasLanguage },
+                      { label: "Headings (H1)", value: String(result.h1Count), ok: result.h1Count === 1 },
+                      { label: "Images", value: result.imagesWithoutAlt > 0 ? `${result.imageCount} total (${result.imagesWithoutAlt} without alt)` : `${result.imageCount} total`, ok: result.imagesWithoutAlt === 0 },
+                      { label: "Links", value: `${result.internalLinkCount} internal / ${result.externalLinkCount} external`, ok: true },
+                      { label: "Scripts & Styles", value: `${result.scriptCount} scripts / ${result.styleCount} styles`, ok: result.scriptCount < 15 },
+                    ].map((stat, i) => (
+                      <div key={stat.label} className={`border-b-2 border-[#1a1a1a] p-3 ${i < 4 ? "sm:border-r-2" : ""}`}>
+                        <div className="text-xs font-bold text-[#1a1a1a]/50 uppercase tracking-wider">{stat.label}</div>
+                        <div className={`mt-1 text-sm font-bold ${stat.ok ? "text-[#1a1a1a]" : "text-red-600"}`}>{stat.value}</div>
+                      </div>
+                    ))}
+                  </div>
                 ) : (
-                <div className="border-2 border-[#1a1a1a] bg-[#FFFBF0] px-4 py-5">
-                  <p className="text-sm font-black text-[#1a1a1a]">Page metadata was not collected.</p>
-                  <p className="mt-1 text-xs leading-relaxed text-[#1a1a1a]/60">{scanBlocked
-                    ? "The scan was blocked before the website's own content could be fetched — none of this data belongs to the website."
-                    : `The final response (HTTP ${result.status}${scanSummary?.notHtml ? ", not an HTML document" : ""}${scanSummary?.incomplete ? ", incomplete body" : ""}) was not the site's own complete page, so title, description, headings and images were not analyzed.`}</p>
-                </div>
+                  <div className="border-2 border-[#1a1a1a] bg-[#FFFBF0] px-4 py-5">
+                    <p className="text-sm font-black text-[#1a1a1a]">Page metadata was not collected.</p>
+                    <p className="mt-1 text-xs leading-relaxed text-[#1a1a1a]/60">{scanBlocked
+                      ? "The scan was blocked before the website's own content could be fetched — none of this data belongs to the website."
+                      : `The final response (HTTP ${result.status}${scanSummary?.notHtml ? ", not an HTML document" : ""}${scanSummary?.incomplete ? ", incomplete body" : ""}) was not the site's own complete page, so title, description, headings and images were not analyzed.`}</p>
+                  </div>
                 )}
               </div>
             </div>
 
-            {/* Security Headers */}
             <div className="border-b-2 border-[#1a1a1a] bg-white">
               <div className="mx-auto max-w-6xl px-4 py-6 sm:px-6">
                 <h3 className="mb-4 text-lg font-black">Security Headers</h3>
                 {scanBlocked ? (
-                <div className="border-2 border-[#1a1a1a] bg-[#FFFBF0] px-4 py-5">
-                  <p className="text-sm font-black text-[#1a1a1a]">Security headers could not be verified.</p>
-                  <p className="mt-1 text-xs leading-relaxed text-[#1a1a1a]/60">The response came from the site's bot protection, not from its server configuration — nothing here is reported as present or missing.</p>
-                </div>
+                  <div className="border-2 border-[#1a1a1a] bg-[#FFFBF0] px-4 py-5">
+                    <p className="text-sm font-black text-[#1a1a1a]">Security headers could not be verified.</p>
+                    <p className="mt-1 text-xs leading-relaxed text-[#1a1a1a]/60">The response came from the site's bot protection, not from its server configuration — nothing here is reported as present or missing.</p>
+                  </div>
                 ) : (
-                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                  {[
-                    { label: "Content-Security-Policy", present: result.hasCSP, hint: "Protects against XSS and injection attacks" },
-                    { label: "X-Frame-Options", present: result.hasXFrameOptions, hint: "Prevents clickjacking" },
-                    { label: "X-Content-Type-Options", present: result.hasXContentTypeOptions, hint: "Prevents MIME-type sniffing" },
-                    { label: "Strict-Transport-Security", present: result.hasStrictTransportSecurity, hint: "Enforces HTTPS connections" },
-                    { label: "Referrer-Policy", present: result.hasReferrerPolicy, hint: "Controls referrer information sharing" },
-                    { label: "Permissions-Policy", present: result.hasPermissionsPolicy, hint: "Controls browser feature access" },
-                  ].map((header) => (
-                    <div key={header.label} className="flex items-center justify-between border-2 border-[#1a1a1a] bg-[#FFFBF0] px-4 py-3">
-                      <div><span className="text-sm font-bold">{header.label}</span><p className="mt-0.5 text-[11px] text-[#1a1a1a]/40">{header.hint}</p></div>
-                      {header.present ? (<span className="flex shrink-0 items-center gap-1.5 text-xs font-bold text-emerald-600"><CheckCircle className="size-3.5" /> Present</span>) : (<span className="flex shrink-0 items-center gap-1.5 text-xs font-bold text-red-600"><XCircle className="size-3.5" /> Missing</span>)}
-                    </div>
-                  ))}
-                </div>
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                    {[
+                      { label: "Content-Security-Policy", present: result.hasCSP, hint: "Protects against XSS and injection attacks" },
+                      { label: "X-Frame-Options", present: result.hasXFrameOptions, hint: "Prevents clickjacking" },
+                      { label: "X-Content-Type-Options", present: result.hasXContentTypeOptions, hint: "Prevents MIME-type sniffing" },
+                      { label: "Strict-Transport-Security", present: result.hasStrictTransportSecurity, hint: "Enforces HTTPS connections" },
+                      { label: "Referrer-Policy", present: result.hasReferrerPolicy, hint: "Controls referrer information sharing" },
+                      { label: "Permissions-Policy", present: result.hasPermissionsPolicy, hint: "Controls browser feature access" },
+                    ].map((header) => (
+                      <div key={header.label} className="flex items-center justify-between border-2 border-[#1a1a1a] bg-[#FFFBF0] px-4 py-3">
+                        <div><span className="text-sm font-bold">{header.label}</span><p className="mt-0.5 text-[11px] text-[#1a1a1a]/40">{header.hint}</p></div>
+                        {header.present ? (<span className="flex shrink-0 items-center gap-1.5 text-xs font-bold text-emerald-600"><CheckCircle2 className="size-3.5" /> Present</span>) : (<span className="flex shrink-0 items-center gap-1.5 text-xs font-bold text-red-600"><XCircle className="size-3.5" /> Missing</span>)}
+                      </div>
+                    ))}
+                  </div>
                 )}
               </div>
             </div>
 
-            {/* Quick Wins */}
-            {(result.quickWins?.length ?? 0) > 0 && (
-              <div className="border-b-2 border-[#1a1a1a] bg-white">
-                <div className="mx-auto max-w-6xl px-4 py-6 sm:px-6">
-                  <h3 className="mb-4 text-lg font-black">Quick Wins</h3>
-                  <p className="text-xs text-[#1a1a1a]/50 mb-3">Fix these for the biggest score improvement with the least effort. Each one is explained once, in the full Recommendations list further down.</p>
-                  <div className="space-y-2">
-                    {(result.quickWins ?? []).map((qw, i) => {
-                      const pri = priorityConfig[qw.priority];
-                      return (
-                        <div key={i} className="flex items-center gap-3 border-2 border-[#1a1a1a] bg-[#FFFBF0] px-4 py-3">
-                          <div className="flex size-7 shrink-0 items-center justify-center border border-[#1a1a1a]/20 bg-white text-xs font-black">{i + 1}</div>
-                          <div className="flex-1 min-w-0">
-                            <p className="text-sm font-bold text-[#1a1a1a]">{qw.message}</p>
-                            <div className="flex items-center gap-2 mt-0.5">
-                              <span className={`border ${pri.border} ${pri.bg} px-1.5 py-0.5 text-[10px] font-bold ${pri.color}`}>{pri.label}</span>
-                              <span className="text-[10px] font-bold text-emerald-600">{(quickWinGains[i] ?? 0) > 0 ? `≈+${quickWinGains[i]} pts overall` : "Best practice — no direct score change"}</span>
-                            </div>
+            <div className="border-b-2 border-[#1a1a1a] bg-white">
+              <div className="mx-auto max-w-6xl px-4 py-6 sm:px-6">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-lg font-black">Quick Wins</h3>
+                  <span className="border-2 border-[#1a1a1a] bg-[#FFFBF0] px-3 py-1 text-xs font-bold">{dedupedIssues.length} issue{dedupedIssues.length !== 1 ? "s" : ""} found</span>
+                </div>
+                <p className="text-xs text-[#1a1a1a]/50 mb-3">Fix these for the biggest score improvement with the least effort. Each one is explained once, in the full Recommendations list further down.</p>
+                <div className="space-y-2">
+                  {(result.quickWins ?? []).map((qw, i) => {
+                    const pri = priorityConfig[qw.priority];
+                    return (
+                      <div key={i} className="flex items-center gap-3 border-2 border-[#1a1a1a] bg-[#FFFBF0] px-4 py-3">
+                        <div className="flex size-7 shrink-0 items-center justify-center border border-[#1a1a1a]/20 bg-white text-xs font-black">{i + 1}</div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-bold text-[#1a1a1a]">{qw.message}</p>
+                          <div className="flex items-center gap-2 mt-0.5">
+                            <span className={`border ${pri.border} ${pri.bg} px-1.5 py-0.5 text-[10px] font-bold ${pri.color}`}>{pri.label}</span>
+                            <span className="text-[10px] font-bold text-emerald-600">{(quickWinGains[i] ?? 0) > 0 ? `≈+${quickWinGains[i]} pts overall` : "Best practice — no direct score change"}</span>
                           </div>
                         </div>
-                      );
-                    })}
-                  </div>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
-            )}
+            </div>
 
-            {/* Issues */}
             <div className="border-b-2 border-[#1a1a1a] bg-white">
               <div className="mx-auto max-w-6xl px-4 py-6 sm:px-6">
                 <div className="flex items-center justify-between">
@@ -574,11 +512,7 @@ export default function Landing() {
             <Link to="/terms" className="text-white/70 underline-offset-2 transition-colors hover:text-white hover:underline">Terms of Service</Link>
             <a href="mailto:sitepulse@freebuff.app" className="text-white/70 underline-offset-2 transition-colors hover:text-white hover:underline">Contact</a>
           </nav>
-          <button
-            type="button"
-            onClick={() => setFeedbackOpen(true)}
-            className="inline-flex items-center gap-1.5 border-2 border-white bg-transparent px-3 py-1.5 text-sm font-bold text-white shadow-[2px_2px_0px_0px_rgba(255,255,255,0.4)] transition-all hover:bg-white hover:text-[#1a1a1a]"
-          >
+          <button type="button" onClick={() => setFeedbackOpen(true)} className="inline-flex items-center gap-1.5 border-2 border-white bg-transparent px-3 py-1.5 text-sm font-bold text-white shadow-[2px_2px_0px_0px_rgba(255,255,255,0.4)] transition-all hover:bg-white hover:text-[#1a1a1a]">
             💬 Give Feedback
           </button>
           <p className="text-xs text-white/50">Free website health checker. First-party analytics only — no ads, no cross-site tracking. No sign-up required.</p>
@@ -586,81 +520,6 @@ export default function Landing() {
       </footer>
 
       {feedbackOpen && <FeedbackModal onClose={() => setFeedbackOpen(false)} />}
-    </div>
-  );
-}
-
-function StatusPill({ ok, label }: { ok: boolean; label: string }) {
-  return (<span className={`inline-flex items-center gap-1 border-2 border-[#1a1a1a] px-2.5 py-0.5 text-xs font-bold ${ok ? "bg-[#D1FAE5]" : "bg-red-100"}`}>{ok ? <CheckCircle className="size-3" /> : <AlertTriangle className="size-3" />}{label}</span>);
-}
-
-function IssueGroup({ category, issues }: { category: string; issues: ScanResult["issues"] }) {
-  const [open, setOpen] = useState(true);
-  const criticalCount = issues.filter((i) => i.severity === "critical").length;
-  const warningCount = issues.filter((i) => i.severity === "warning").length;
-  const CatIcon = categoryIcons[category] || Globe;
-  return (
-    <div className="border-2 border-[#1a1a1a] bg-[#FFFBF0]">
-      <button onClick={() => setOpen(!open)} aria-expanded={open} className="flex w-full items-center justify-between px-4 py-3 text-left">
-        <div className="flex items-center gap-3">
-          <div className="flex size-7 items-center justify-center border border-[#1a1a1a]/20 bg-white" aria-hidden="true"><CatIcon className="size-3.5" /></div>
-          <span className="font-black">{category}</span>
-          <div className="flex gap-1.5">
-            {criticalCount > 0 && <span className="border border-red-300 bg-red-100 px-1.5 py-0.5 text-[10px] font-bold text-red-600">{criticalCount} critical</span>}
-            {warningCount > 0 && <span className="border border-amber-300 bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-600">{warningCount} warning{warningCount > 1 ? "s" : ""}</span>}
-          </div>
-        </div>
-        <ChevronDown className={`size-4 transition-transform ${open ? "rotate-180" : ""}`} />
-      </button>
-      <AnimatePresence>
-        {open && (
-          <motion.div initial={{ height: 0 }} animate={{ height: "auto" }} exit={{ height: 0 }} className="overflow-hidden border-t-2 border-[#1a1a1a]">
-            <div className="divide-y-2 divide-[#1a1a1a]/10">
-              {issues.map((issue, i) => <IssueDetail key={i} issue={issue} />)}
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
-  );
-}
-
-function IssueDetail({ issue }: { issue: ScanResult["issues"][0] }) {
-  const [expanded, setExpanded] = useState(false);
-  const sev = severityConfig[issue.severity];
-  const pri = priorityConfig[issue.priority];
-  const Icon = sev.icon;
-  return (
-    <div className="px-4 py-3">
-      <div className="flex items-start gap-3">
-        <div className={`mt-0.5 flex size-6 shrink-0 items-center justify-center border border-[#1a1a1a]/20 ${sev.bg}`}><Icon className={`size-3.5 ${sev.color}`} /></div>
-        <div className="flex-1 min-w-0">
-          <div className="flex flex-wrap items-center gap-1.5">
-            <span className={`text-[10px] font-bold uppercase tracking-wider ${sev.color}`}>{sev.label}</span>
-            <span className={`border ${pri.border} ${pri.bg} px-1.5 py-0.5 text-[10px] font-bold ${pri.color}`}>{pri.label}</span>
-          </div>
-          <p className="mt-0.5 text-sm leading-relaxed text-[#1a1a1a]/80">{issue.message}</p>
-        </div>
-        <button onClick={() => setExpanded(!expanded)} aria-expanded={expanded} aria-label={expanded ? "Collapse issue details" : "Expand issue details"} className="shrink-0 mt-0.5 rounded-sm p-1 text-[#1a1a1a]/30 transition-colors hover:text-[#1a1a1a]/60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#1a1a1a]">
-          {expanded ? <ChevronUp className="size-4" aria-hidden="true" /> : <ChevronDown className="size-4" aria-hidden="true" />}
-        </button>
-      </div>
-      <AnimatePresence>
-        {expanded && (
-          <motion.div initial={{ height: 0 }} animate={{ height: "auto" }} exit={{ height: 0 }} className="overflow-hidden">
-            <div className="ml-9 mt-2 space-y-2">
-              <div className="border-l-3 border-amber-400 bg-amber-50 pl-3 py-1.5">
-                <div className="text-[10px] font-bold uppercase tracking-wider text-amber-700">Why it matters</div>
-                <p className="mt-0.5 text-xs leading-relaxed text-[#1a1a1a]/70">{issue.whyItMatters}</p>
-              </div>
-              <div className="border-l-3 border-emerald-400 bg-emerald-50 pl-3 py-1.5">
-                <div className="text-[10px] font-bold uppercase tracking-wider text-emerald-700">How to fix</div>
-                <p className="mt-0.5 text-xs leading-relaxed text-[#1a1a1a]/70">{issue.howToFix}</p>
-              </div>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
     </div>
   );
 }
