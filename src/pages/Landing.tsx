@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useState, type ReactNode, useRef } from "react";
 import { useAction, useMutation } from "convex/react";
 import { api } from "../convex/_generated/api";
 import { trackEvent, getVisitorId } from "../lib/analytics";
@@ -142,6 +142,19 @@ async function getFreeMonitorLimit(): Promise<number> {
     const body = (await res.json().catch(() => ({}))) as { data?: { limit?: number } };
     const limit = typeof body.data?.limit === "number" ? body.data.limit : undefined;
     return Number.isInteger(limit) && limit > 0 ? limit : 10;
+  }
+
+  function getLimit(): number {
+    if (typeof window === "undefined") return 10;
+    const saved = window.localStorage.getItem("sp_free_monitor_limit");
+    if (saved) {
+      const parsed = Number(saved);
+      if (Number.isInteger(parsed) && parsed > 0) return parsed;
+    }
+    return 10;
+  }
+
+  const freeMonitorLimit = getLimit();
   } catch {
     return 10;
   }
@@ -193,8 +206,8 @@ export default function Landing() {
   const scanWebsite = useAction(api.scan.scanWebsite);
   const saveScan = useMutation(api.scans.saveScan);
   const navigate = useNavigate();
-  const { isAuthenticated } = useAuth();
-  const resultsRef = useState<React.RefObject<HTMLDivElement | null>>(() => React.createRef())[0];
+  const { isAuthenticated, user } = useAuth();
+  const resultsRef = useRef<HTMLDivElement | null>(null);
 
   const handleScan = async () => {
     if (!url.trim()) return;

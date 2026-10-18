@@ -1,8 +1,9 @@
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { useAuth } from "@/hooks/use-auth";
 import { Activity, CheckCircle2, Clock, Gauge, LogOut, Monitor, AlertTriangle } from "lucide-react";
-import { Link, useNavigate } from "react-router";
+import { Link } from "react-router";
+
 
 // ── Website Monitoring (uptime monitoring) — first-class product section ──────
 // Mirrors the Landing page onboarding: the explanation, the action, the
@@ -57,6 +58,18 @@ export default function Dashboard() {
             <CardDescription>
               Turn your website into a watched service: automated uptime checks, downtime incidents and email alerts.
             </CardDescription>
+            <div className="flex items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              <AlertTriangle className="size-3.5 shrink-0" />
+              <span className="font-medium">Free plan:</span> up to 10 monitors per account. Add more websites once a paid plan is active.
+            </div>
+            <div className="flex items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              <AlertTriangle className="size-3.5 shrink-0" />
+              <span className="font-medium">Free plan:</span> up to 10 monitors per account. Add more websites once a paid plan is active.
+            </div>
+            <div className="flex items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              <AlertTriangle className="size-3.5 shrink-0" />
+              <span className="font-medium">Free plan:</span> up to 10 monitors per account. Add more websites once a paid plan is active.
+            </div>
           </CardHeader>
           <CardContent className="flex flex-col gap-5 text-sm leading-6 text-muted-foreground">
             <p className="leading-relaxed">{MONITORING_INTRO}</p>
@@ -94,9 +107,13 @@ export default function Dashboard() {
             </CardTitle>
           </CardHeader>
           <CardContent className="flex flex-col gap-4 text-sm leading-6 text-muted-foreground">
-            <p>
+            <p className="leading-relaxed">
               Your monitors, your dashboards, your data — everything you need to keep every site you ship healthy. Open Uptime monitoring or scan another website to see live status and incidents.
             </p>
+            <div className="flex items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              <AlertTriangle className="size-3.5 shrink-0" />
+              <span className="font-medium">Free plan:</span> up to 10 monitors per account. Add more websites once a paid plan is active.
+            </div>
             <Button type="button" className="gap-2 self-start" onClick={() => navigate("/monitors")}>
               <Clock className="size-4" /> Open Monitoring
             </Button>
