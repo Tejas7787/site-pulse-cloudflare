@@ -283,3 +283,86 @@ describe("monitoring navigation wiring", () => {
     expect(redirects).toContain("/*    /index.html   200");
   });
 });
+
+// Phase 2 dashboard UX: the monitoring section must explain what the feature
+// does, guide new users to their first monitor and alerts, and display ONLY
+// the limit the backend actually enforces — MAX_MONITORS_PER_OWNER, the
+// constant createMonitor throws on — never a hand-typed number or an
+// unbacked browser global.
+describe("dashboard monitoring UX", () => {
+  test("the monitoring section explains checks, incidents, recovery and alerts", () => {
+    const dashboard = read("src/pages/Dashboard.tsx");
+    expect(dashboard).toContain("Automated uptime checks");
+    expect(dashboard).toContain("downtime incident tracking");
+    expect(dashboard).toContain("recovery detection");
+    expect(dashboard).toContain("email alerts");
+    // Honest confirmation rules, matching FAILURES_TO_DECLARE_DOWN (2) and
+    // SUCCESSES_TO_RECOVER (2) in src/lib/monitoring.ts.
+    expect(dashboard).toContain("two consecutive failed checks");
+    expect(dashboard).toContain("two consecutive successful checks");
+  });
+
+  test("a Getting started guide covers adding a monitor and configuring alerts", () => {
+    const dashboard = read("src/pages/Dashboard.tsx");
+    expect(dashboard).toContain("Getting started");
+    expect(dashboard).toContain('title: "Open Monitoring"');
+    expect(dashboard).toContain('title: "Add your website URL"');
+    expect(dashboard).toContain('title: "Choose a check interval"');
+    expect(dashboard).toContain('title: "Configure alerts"');
+    // The alert email is optional and falls back to the account address
+    // (the Monitors.tsx input placeholder uses user.email).
+    expect(dashboard).toContain("defaults to your account address");
+  });
+
+  test("the primary Open Monitoring CTA and header both target /monitors, with imports intact", () => {
+    const dashboard = read("src/pages/Dashboard.tsx");
+    expect(dashboard).toContain('navigate("/monitors")');
+    expect(dashboard).toContain('to="/monitors"');
+    // A previous draft called useNavigate() without importing it.
+    expect(dashboard).toContain('import { Link, useNavigate } from "react-router"');
+  });
+
+  test("the displayed free-monitor limit is the enforced constant, shown once", () => {
+    const dashboard = read("src/pages/Dashboard.tsx");
+    expect(dashboard).toContain("MAX_MONITORS_PER_OWNER");
+    expect(dashboard).not.toContain("up to 10 monitors");
+    // Exactly one free-plan notice — an earlier draft repeated it five times.
+    expect(dashboard.split("Free plan:").length - 1).toBe(1);
+    // The Monitors page helper text shows the same constant, not a literal.
+    const monitors = read("src/pages/Monitors.tsx");
+    expect(monitors).toContain("MAX_MONITORS_PER_OWNER");
+    expect(monitors).not.toContain("up to 10 monitors");
+  });
+
+  test("the landing page reads the same constant instead of unbacked globals", () => {
+    const landing = read("src/pages/Landing.tsx");
+    expect(landing).toContain("MAX_MONITORS_PER_OWNER");
+    // The broken fetch/localStorage shim and window.sitePulse read are gone.
+    expect(landing).not.toContain("getFreeMonitorLimit");
+    expect(landing).not.toContain("sitePulse.freeMonitorLimit");
+    expect(landing).not.toContain("sp_free_monitor_limit");
+    expect(landing).not.toContain("up to 10 monitors");
+  });
+
+  test("the limit query and the creation gate share one source of truth", () => {
+    const users = read("src/convex/users.ts");
+    expect(users).toContain("MAX_MONITORS_PER_OWNER");
+    expect(users).not.toContain("limit: 10");
+    const monitors = read("src/convex/monitors.ts");
+    // The gate counts owned monitors against MAX_MONITORS_PER_OWNER + 1…
+    expect(monitors).toContain("MAX_MONITORS_PER_OWNER + 1");
+    // …and its error message interpolates the same constant.
+    expect(monitors).toContain("Free plan limit: ${MAX_MONITORS_PER_OWNER}");
+  });
+
+  test("RequireAuth still guards the monitoring route via /auth?returnTo=", () => {
+    const guard = read("src/components/RequireAuth.tsx");
+    expect(guard).toContain("isAuthenticated");
+    expect(guard).toContain("/auth?returnTo=");
+    expect(guard).toContain("encodeURIComponent(returnTo)");
+    const main = read("src/main.tsx");
+    const routeIdx = main.indexOf('path="/monitors"');
+    expect(routeIdx).toBeGreaterThan(-1);
+    expect(main.slice(routeIdx, routeIdx + 250)).toContain("<RequireAuth>");
+  });
+});

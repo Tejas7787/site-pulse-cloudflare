@@ -21,7 +21,11 @@ import { useAuth } from "@/hooks/use-auth";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { MONITOR_INTERVALS_MS, type ProbeResult } from "@/lib/monitoring";
+import {
+  MAX_MONITORS_PER_OWNER,
+  MONITOR_INTERVALS_MS,
+  type ProbeResult,
+} from "@/lib/monitoring";
 
 // ── /monitors — Phase 2: automatic uptime monitoring ────────────────────────
 // Publicly reachable with a dashboard CTA. Monitors are probed server-side
@@ -201,8 +205,9 @@ export default function Monitors() {
               </Button>
             </form>
             <p className="mt-3 text-xs text-muted-foreground">
-              Free plan: up to 10 monitors. Downtime is declared only after 2
-              consecutive failed checks, so single blips never alert you.
+              Free plan: up to {MAX_MONITORS_PER_OWNER} monitors. Downtime is
+              declared only after 2 consecutive failed checks, so single blips
+              never alert you.
               {!alertEmail.trim() && user?.email ? ` Alerts go to ${user.email}.` : ""}
             </p>
           </CardContent>

@@ -1,20 +1,18 @@
-import { useState, type ReactNode, useRef } from "react";
+import { useState, useRef } from "react";
 import { useAction, useMutation } from "convex/react";
 import { api } from "../convex/_generated/api";
 import { trackEvent, getVisitorId } from "../lib/analytics";
 import FeedbackModal from "../components/FeedbackModal";
-import { addScanToHistory, getScanHistory, clearScanHistory, domainFromUrl, formatScanDate, type ScanHistoryEntry } from "../lib/scanHistory";
+import { addScanToHistory, getScanHistory, type ScanHistoryEntry } from "../lib/scanHistory";
 import { ScoreTrend } from "../components/ScoreTrend";
 import { StatusPill } from "../components/ui/status-pill";
-import type { StatusPillProps } from "../components/ui/status-pill";
 import { dedupeIssues } from "../lib/recommendations";
 import { honestQuickWinGains } from "../lib/scoring";
-import { History, LogIn, Trash2, Activity, Monitor, Clock, CheckCircle2, AlertTriangle, ArrowRight, XCircle, Shield, Zap, Search, Eye, Globe, Loader2, Mail, ExternalLink, Share2 } from "lucide-react";
+import { History, LogIn, Activity, Monitor, CheckCircle2, AlertTriangle, ArrowRight, XCircle, Zap, Search, Globe, Loader2, Mail, ExternalLink, Share2 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useNavigate, Link } from "react-router";
 import { useAuth } from "@/hooks/use-auth";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { MAX_MONITORS_PER_OWNER } from "@/lib/monitoring";
 
 type Severity = "critical" | "warning" | "info";
 type Priority = "critical" | "important" | "recommended" | "nice-to-have";
@@ -112,9 +110,6 @@ const priorityConfig: Record<Priority, { label: string; color: string; bg: strin
 };
 
 const categoryOrder = ["Performance", "SEO", "Security", "Accessibility", "Technical Health"];
-const categoryIcons: Record<string, typeof Shield> = {
-  Performance: Zap, SEO: Search, Security: Shield, Accessibility: Eye, "Technical Health": Globe,
-};
 
 function nullsToUndefined<T>(value: T): T {
   if (value === null) return undefined as T;
@@ -127,38 +122,52 @@ function nullsToUndefined<T>(value: T): T {
   return value;
 }
 
+// ── Inline recommendations group ────────────────────────────────────────
+// One group per category in the on-page results: severity and priority chips,
+// the issue message, why it matters and how to fix — the same data the full
+// report page renders, kept inline so a scan result is readable on the spot.
+function IssueGroup({ category, issues }: { category: string; issues: ScanResult["issues"] }) {
+  return (
+    <div className="border-2 border-[#1a1a1a] bg-white">
+      <div className="flex items-center justify-between border-b-2 border-[#1a1a1a] bg-[#FFFBF0] px-4 py-2.5">
+        <h4 className="text-sm font-black">{category}</h4>
+        <span className="text-xs font-bold text-[#1a1a1a]/50">
+          {issues.length} issue{issues.length !== 1 ? "s" : ""}
+        </span>
+      </div>
+      <ul>
+        {issues.map((issue, i) => {
+          const sev = severityConfig[issue.severity];
+          const pri = priorityConfig[issue.priority];
+          return (
+            <li key={i} className="border-b border-[#1a1a1a]/10 px-4 py-3 last:border-b-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className={`inline-flex items-center gap-1.5 border px-1.5 py-0.5 text-[10px] font-bold ${pri.border} ${sev.bg} ${sev.color}`}>
+                  <sev.icon className="size-3" aria-hidden="true" /> {sev.label}
+                </span>
+                <span className={`border px-1.5 py-0.5 text-[10px] font-bold ${pri.border} ${pri.bg} ${pri.color}`}>{pri.label}</span>
+              </div>
+              <p className="mt-1.5 text-sm font-bold">{issue.message}</p>
+              <p className="mt-1 text-xs leading-relaxed text-[#1a1a1a]/60">
+                <span className="font-bold text-[#1a1a1a]/80">Why it matters:</span> {issue.whyItMatters}
+              </p>
+              <p className="mt-1 text-xs leading-relaxed text-[#1a1a1a]/60">
+                <span className="font-bold text-[#1a1a1a]/80">How to fix:</span> {issue.howToFix}
+              </p>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
 // ── Website Monitoring ──────────────────────────────────────────────────────────
 // The product is now a first-class service: an onboarding section on the
 // landing page, a prominent CTA from the authenticated dashboard, and a
-// run-time free-monitor limit that the backend enforces so the UI can show
-// the configured cap without duplicating it here.
-
-/** Runtime free-tier cap, read from Convex so the UI and the monitor creation
- *  gate never disagree (src/convex/monitors.ts enforces the same value). */
-async function getFreeMonitorLimit(): Promise<number> {
-  try {
-    const res = await fetch(`/api/convex/users/getFreeMonitorLimit`);
-    if (!res.ok) return 10;
-    const body = (await res.json().catch(() => ({}))) as { data?: { limit?: number } };
-    const limit = typeof body.data?.limit === "number" ? body.data.limit : undefined;
-    return Number.isInteger(limit) && limit > 0 ? limit : 10;
-  }
-
-  function getLimit(): number {
-    if (typeof window === "undefined") return 10;
-    const saved = window.localStorage.getItem("sp_free_monitor_limit");
-    if (saved) {
-      const parsed = Number(saved);
-      if (Number.isInteger(parsed) && parsed > 0) return parsed;
-    }
-    return 10;
-  }
-
-  const freeMonitorLimit = getLimit();
-  } catch {
-    return 10;
-  }
-}
+// free-monitor limit the UI reads from MAX_MONITORS_PER_OWNER — the exact
+// constant src/convex/monitors.ts enforces when a monitor is created — so
+// the displayed cap can never disagree with the backend.
 
 const MONITORING_INTRO =
   "SitePulse monitors your live websites from its own servers on a schedule — no browser open, no setup on your side. Every check records uptime history, and downtime is confirmed only after two consecutive failed checks before we open an incident.";
@@ -188,7 +197,7 @@ const MONITORING_SECTIONS = [
   {
     eyebrow: "Alerts",
     title: "Email alerts for incidents and recovery",
-    desc: "Downtime and recovery emails include the host, reason, dates and duration — and there is a recovery email too.",
+    desc: "Downtime and recovery emails include the host, what the probe observed, the dates and how long the outage lasted.",
     icon: Mail,
     color: "bg-[#FCE7F3]",
   },
@@ -206,7 +215,7 @@ export default function Landing() {
   const scanWebsite = useAction(api.scan.scanWebsite);
   const saveScan = useMutation(api.scans.saveScan);
   const navigate = useNavigate();
-  const { isAuthenticated, user } = useAuth();
+  const { isAuthenticated } = useAuth();
   const resultsRef = useRef<HTMLDivElement | null>(null);
 
   const handleScan = async () => {
@@ -346,11 +355,11 @@ export default function Landing() {
             </div>
           </div>
 
-          {/* Free-monitor limit — populated here with the backend-verified 10 */}
+          {/* Free-monitor limit — the same constant the monitor-creation gate enforces */}
           <div className="mt-8 flex items-center gap-3 rounded-lg border-2 border-[#1a1a1a] bg-[#FFFBF0] px-4 py-3 text-sm">
             <AlertTriangle className="size-4 text-amber-600" />
             <span className="font-medium text-[#1a1a1a]">Free plan</span>
-            <span className="text-[#1a1a1a]/60">up to {typeof window !== "undefined" ? (window as unknown as { sitePulse: { freeMonitorLimit?: number } }).sitePulse.freeMonitorLimit : 10} monitors per account — add more dashboards once a subscription is active.</span>
+            <span className="text-[#1a1a1a]/60">up to {MAX_MONITORS_PER_OWNER} monitors per account — this is the cap SitePulse enforces when a monitor is added.</span>
           </div>
         </div>
       </section>
