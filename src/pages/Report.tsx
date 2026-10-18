@@ -1,10 +1,11 @@
 import { useParams, Link } from "react-router";
 import { useQuery } from "convex/react";
 import { api } from "../convex/_generated/api";
-import { trackEvent } from "../lib/analytics";
+import { getVisitorId, trackEvent } from "../lib/analytics";
 import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import FixRecommendations from "../components/FixRecommendations";
+import WebsiteDoctor from "../components/WebsiteDoctor";
 import {
   anchorsFor,
   canonicalActionable,
@@ -630,6 +631,19 @@ export default function Report() {
             })}</div>
           </div>
         </section>
+      )}
+
+      {/* AI Website Doctor — plain-language diagnosis immediately after "Fix These First".
+          Screen-only (this wrapper is print:hidden): neither the PDF nor print output include it. */}
+      {id && (
+        <div className="print:hidden">
+          <WebsiteDoctor
+            scanId={id as Id<"scans">}
+            visitorId={getVisitorId()}
+            score={shownScore}
+            grade={grade}
+          />
+        </div>
       )}
 
       {/* Fix Recommendations — the single detailed list of every actionable fix */}

@@ -2,6 +2,7 @@ import { v } from "convex/values";
 import { internalMutation } from "./_generated/server";
 import type { MutationCtx } from "./_generated/server";
 import type { Doc } from "./_generated/dataModel";
+import { DIAGNOSIS_LIMIT_PER_HOUR, DIAGNOSIS_WINDOW_MS } from "../lib/aiDoctor";
 
 /**
  * Rolling-window quotas for SitePulse's public endpoints.
@@ -19,6 +20,11 @@ export const SCAN_LIMIT = 20;
 export const SCAN_WINDOW_MS = 60 * 60 * 1000; // 1 hour
 /** Longest a stale key is kept around before the cron deletes it. */
 export const RATE_LIMIT_MAX_AGE_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+/** AI Website Doctor diagnoses allowed per visitor per window (single source: lib/aiDoctor). */
+export const AI_DIAGNOSIS_LIMIT = DIAGNOSIS_LIMIT_PER_HOUR;
+/** Length of the AI Website Doctor window. */
+export const AI_DIAGNOSIS_WINDOW_MS = DIAGNOSIS_WINDOW_MS;
 
 export interface QuotaResult {
   allowed: boolean;
@@ -87,6 +93,23 @@ export const consumeScanQuota = internalMutation({
     // The limit travels with the result so the action can word the error
     // without importing this module into its "use node" bundle.
     return { ...result, limit: SCAN_LIMIT };
+  },
+});
+
+/**
+ * Internal: called by the Website Doctor action before it builds a diagnosis.
+ * Server-side only — the client cannot bypass it by calling the library.
+ */
+export const consumeAiQuota = internalMutation({
+  args: { visitorId: v.optional(v.string()) },
+  handler: async (ctx, args) => {
+    const visitor = args.visitorId?.trim().slice(0, 64) || "anonymous";
+    const result = await consumeQuota(ctx, {
+      key: `ai:${visitor}`,
+      limit: AI_DIAGNOSIS_LIMIT,
+      windowMs: AI_DIAGNOSIS_WINDOW_MS,
+    });
+    return { ...result, limit: AI_DIAGNOSIS_LIMIT };
   },
 });
 

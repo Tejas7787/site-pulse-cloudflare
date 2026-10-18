@@ -2,6 +2,8 @@
 
 import { v } from "convex/values";
 import { action } from "./_generated/server";
+import { api, internal } from "./_generated/api";
+import { buildDiagnosis, type DoctorDiagnosis } from "../lib/aiDoctor";
 
 /**
  * SitePulse AI Assistant — server-side action.
@@ -255,5 +257,66 @@ export const askAssistant = action({
 
     // Deterministic fallback — answers from real scan data only
     return { answer: deterministicAnswer(trimmedQuestion, parsed) };
+  },
+});
+
+/* ── AI Website Doctor (Phase 3, V1) ───────────────────────────────────── */
+
+/**
+ * Explain a saved report's findings in plain language: what each top finding
+ * means, the likely root cause, the honest impact and prioritized fixes.
+ *
+ * V1 is fallback-first and makes NO external model calls (paid AI calls stay
+ * off until model credits are verified for this deployment):
+ * - quota first: 10 diagnoses/hour/visitor, enforced server-side here —
+ *   the client cannot bypass it by calling the pure library directly;
+ * - the scan is fetched SERVER-SIDE by id, so the diagnosis always describes
+ *   the stored document, never a client-supplied payload;
+ * - the diagnosis itself comes from src/lib/aiDoctor.ts (deterministic,
+ *   evidence-grounded), and the result is explicitly labelled
+ *   aiStatus: "unavailable" so the UI can never claim AI analysis ran.
+ *
+ * V2: when credits are verified, attempt vly.ai.completion here — as an
+ * ADDITION in front of (never instead of) buildDiagnosis, without changing
+ * any number it computes.
+ */
+export const explainFindings = action({
+  args: {
+    scanId: v.id("scans"),
+    visitorId: v.optional(v.string()),
+  },
+  handler: async (ctx, args): Promise<
+    | { kind: "quotaExceeded"; retryAfterMs: number; limit: number }
+    | { kind: "notFound" }
+    | {
+        kind: "ok";
+        diagnosis: DoctorDiagnosis;
+        aiStatus: "unavailable";
+        aiReason: string;
+        remaining: number;
+      }
+  > => {
+    // 1. Server-side quota — consumed before any work happens.
+    const quota = await ctx.runMutation(internal.rateLimit.consumeAiQuota, {
+      visitorId: args.visitorId,
+    });
+    if (!quota.allowed) {
+      return { kind: "quotaExceeded", retryAfterMs: quota.retryAfterMs, limit: quota.limit };
+    }
+
+    // 2. Trusted input: the stored scan, fetched by id (never client JSON).
+    const scan = await ctx.runQuery(api.scans.getScan, { id: args.scanId });
+    if (!scan) return { kind: "notFound" };
+
+    // 3. Deterministic, evidence-grounded diagnosis (no model call in V1).
+    const diagnosis = buildDiagnosis(scan);
+    return {
+      kind: "ok",
+      diagnosis,
+      aiStatus: "unavailable",
+      aiReason:
+        "AI analysis did not run: model credits are not verified for this deployment. This diagnosis was produced by SitePulse's evidence-based rules engine using only this report's saved data.",
+      remaining: quota.remaining,
+    };
   },
 });
