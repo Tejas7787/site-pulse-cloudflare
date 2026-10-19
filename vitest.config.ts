@@ -4,6 +4,10 @@ import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { vlyPlugin } from "@vly-ai/integrations";
 
+// Vitest runs ONLY the dedicated Convex handler integration tests, which use
+// the real convex-test backend. Every other file under tests/ is written for
+// `bun test` (they import "bun:test", which Vitest cannot resolve), so the
+// project's primary test command remains `bun test`.
 export default defineProject({
   plugins: [react(), vlyPlugin(), tailwindcss()],
   resolve: {
@@ -11,8 +15,9 @@ export default defineProject({
   },
   test: {
     environment: "node",
-    include: ["tests/**/*.test.ts"],
-    globals: true,
-    setupFiles: ["./src/convex/test.setup.ts"],
+    include: [
+      "tests/monitoringHandler.test.ts",
+      "tests/monitoringEnqueue.test.ts",
+    ],
   },
 });

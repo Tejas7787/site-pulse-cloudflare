@@ -1,93 +1,173 @@
-// SitePulse monitoring handler test (Phase 1).
+// SitePulse monitoring handler integration tests (Vitest + convex-test).
 //
-// Real Convex handler: createMonitor (src/convex/monitors.ts) against a local
-// Convex core, so policy is asserted on persisted state. No external API key,
-// no website probe, no network, no production database access.
-// The resolver resolves the handlers; the time helper is an explicit import
-// from the app module; nothing here is a config file read.
+// These drive the REAL Convex handlers from src/convex/monitors.ts inside
+// convex-test's in-memory backend: no fakes, no module mocks, no network, no
+// external API key, no production database. Authorization is exercised
+// through the real @convex-dev/auth path — getAuthUserId() reads the identity
+// that t.withIdentity() authenticates, with the subject shaped exactly like
+// the library's own JWT ("userId|sessionId").
 
 import { describe, expect, test } from "vitest";
-import { ConvexTester } from "convex-test";
+import { convexTest } from "convex-test";
 import { internal } from "../src/convex/_generated/api";
-import { createMonitor } from "../src/convex/monitors";
-import { MAX_MONITORS_PER_OWNER, normalizeMonitorUrl } from "../src/lib/monitoring";
+import schema from "../src/convex/schema";
+import { MAX_MONITORS_PER_OWNER, clampInterval } from "../src/lib/monitoring";
 
-// Minimal fake identity so the auth resolver returns a stable owner id.
-const FAKE_USER_ID = "user_1";
+// convex-test loads Convex function modules on demand from this map. Keys are
+// paths relative to the functions root (src/convex, per convex.json) with the
+// extension kept; at least one key must contain "_generated" so convex-test
+// can locate the root prefix. Values are lazy importers so only the modules a
+// test reaches are ever evaluated.
+const modules = {
+  "_generated/api.js": () => import("../src/convex/_generated/api.js"),
+  "_generated/server.js": () => import("../src/convex/_generated/server.js"),
+  "monitors.ts": () => import("../src/convex/monitors.ts"),
+  "alerts.ts": () => import("../src/convex/alerts.ts"),
+};
 
-describe("createMonitor — real handler, local Convex core", () => {
-  let tester: ConvexTester;
+/** Fresh in-memory backend per test: isolated test data, nothing shared. */
+function freshBackend() {
+  return convexTest(schema, modules);
+}
 
-  beforeAll(async () => {
-    tester = new ConvexTester({ moduleName: "../src/convex/monitors.ts" });
-    await tester.conn.addRole("user", FAKE_USER_ID);
+/** Insert an isolated users row and return its real Convex id. */
+async function createTestUser(
+  t: ReturnType<typeof freshBackend>,
+  email?: string,
+) {
+  return await t.run(async (ctx) =>
+    ctx.db.insert("users", email === undefined ? {} : { email }),
+  );
+}
+
+/** Authenticate as a users document exactly the way @convex-dev/auth does. */
+function signedInAs(
+  t: ReturnType<typeof freshBackend>,
+  userId: string,
+  sessionId = "session1",
+) {
+  return t.withIdentity({ subject: `${userId}|${sessionId}` });
+}
+
+async function allMonitors(t: ReturnType<typeof freshBackend>) {
+  return await t.run(async (ctx) => ctx.db.query("monitors").collect());
+}
+
+describe("createMonitor — real handler, real auth", () => {
+  test("signed-out callers are rejected before anything is written", async () => {
+    const t = freshBackend();
+    await expect(
+      t.mutation(internal.monitors.createMonitor, {
+        url: "https://example.com/",
+        intervalMs: 300_000,
+      }),
+    ).rejects.toThrow("Sign in to manage monitors.");
+    expect(await allMonitors(t)).toHaveLength(0);
   });
 
-  afterAll(async () => {
-    await tester.close();
+  test("a credential-carrying URL is rejected without persisting anything", async () => {
+    const t = freshBackend();
+    const userId = await createTestUser(t);
+    const user = signedInAs(t, userId);
+
+    await expect(
+      user.mutation(internal.monitors.createMonitor, {
+        url: "https://user:pass@example.com/",
+        intervalMs: 300_000,
+      }),
+    ).rejects.toThrow(/valid website address/);
+    expect(await allMonitors(t)).toHaveLength(0);
   });
 
-  test("rejects a credential-carrying URL without persisting anything", async () => {
-    const result = await tester.conn.action(internal.monitors.createMonitor, {
-      url: "https://user:pass@example.com/",
-      intervalMs: 300_000,
+  test("a signed-in create persists a normalized monitor owned by that user", async () => {
+    const t = freshBackend();
+    const userId = await createTestUser(t, "owner@example.com");
+    const user = signedInAs(t, userId);
+
+    const before = Date.now();
+    const monitorId = await user.mutation(internal.monitors.createMonitor, {
+      url: "https://Example.COM/a?b=1 ",
+      intervalMs: 123_456, // not an allowed interval: must be clamped
     });
-    expect(result.error).toMatch(/credentials/);
-    expect(await tester.conn.query("monitors").collect()).toEqual([]);
+
+    const doc = await t.run(async (ctx) => ctx.db.get(monitorId));
+    expect(doc).toMatchObject({
+      ownerId: userId,
+      url: "https://example.com/a?b=1",
+      host: "example.com",
+      name: "example.com", // derived from the host when no name is given
+      status: "active",
+      state: "unknown",
+      intervalMs: clampInterval(123_456),
+      consecutiveFailures: 0,
+      consecutiveSuccesses: 0,
+    });
+    // First check is scheduled ~5s ahead plus a bounded jitter.
+    expect(doc?.nextCheckAt).toBeGreaterThanOrEqual(before + 5_000);
+    expect(doc?.nextCheckAt).toBeLessThan(before + 5_000 + 15_000);
   });
 
-  test("creates a monitor and enforces the free-plan limit", async () => {
-    const create = async (url: string) =>
-      tester.conn.action(internal.monitors.createMonitor, {
-        url,
+  test("the free-plan limit is enforced per account, not globally", async () => {
+    const t = freshBackend();
+    const ownerId = await createTestUser(t);
+    const owner = signedInAs(t, ownerId);
+
+    for (let i = 0; i < MAX_MONITORS_PER_OWNER; i += 1) {
+      await owner.mutation(internal.monitors.createMonitor, {
+        url: `https://site${i}.example.com/`,
         intervalMs: 300_000,
       });
-
-    // Ten successful creates fill the plan exactly (LIMIT = 10).
-    const ids: string[] = [];
-    for (let i = 0; i < 10; i += 1) {
-      const created = await create(`https://example${i}.com/`);
-      expect(created).toBeTruthy();
-      ids.push(created);
     }
-    // The 11th create must be rejected.
-    const rejected = await create("https://example11.com/");
-    expect(rejected.error).toMatch(/Free plan limit/);
-    expect(await tester.conn.query("monitors").collect()).toHaveLength(10);
+    await expect(
+      owner.mutation(internal.monitors.createMonitor, {
+        url: "https://one-too-many.example.com/",
+        intervalMs: 300_000,
+      }),
+    ).rejects.toThrow(/Free plan limit/);
+    expect(await allMonitors(t)).toHaveLength(MAX_MONITORS_PER_OWNER);
 
-    // Confirm the only stored rows were created by this handler (no config
-    // read, no network side effect).
-    const documents = await tester.conn.query("monitors").collect();
-    expect(documents).toHaveLength(10);
-    expect(
-      documents.every((d) =>
-        ["url", "ownerId", "host", "intervalMs", "status", "createdAt"].every(
-          (key) => Object.prototype.hasOwnProperty.call(d, key),
-        ),
-      ),
-    ).toBe(true);
-  });
-
-  test("normalizes URLs the same way the handler does", () => {
-    expect(normalizeMonitorUrl("example.com")).toBe("https://example.com/");
-    expect(normalizeMonitorUrl("https://Example.COM/a?b=1 ")).toBe(
-      "https://example.com/a?b=1",
+    // A second account is unaffected by the first account's full quota.
+    const otherId = await createTestUser(t);
+    const other = signedInAs(t, otherId);
+    const otherMonitorId = await other.mutation(
+      internal.monitors.createMonitor,
+      { url: "https://other-owner.example.com/", intervalMs: 300_000 },
     );
-    expect(normalizeMonitorUrl("https://user:pass@example.com")).toBeNull();
-    expect(normalizeMonitorUrl("")).toBeNull();
+    expect(otherMonitorId).toBeTruthy();
+    expect(await allMonitors(t)).toHaveLength(MAX_MONITORS_PER_OWNER + 1);
   });
 
-  test("rejects an invalid plan limit payload", async () => {
-    const result = await tester.conn.action(internal.monitors.createMonitor, {
-      url: "https://example.com/",
-      intervalMs: 123_456,
-    });
-    // The handler clamps to an allowed interval, so a bad input is still
-    // accepted but stored normalized — the assertion below pins the shape
-    // of what the handler actually persists.
-    expect(result.error).toBeUndefined();
-    const created = await tester.conn.query("monitors").first();
-    expect(created).toBeDefined();
-    expect(created?.intervalMs).toBe(300_000);
+  test("listMonitors and getMonitor only ever expose the caller's own monitors", async () => {
+    const t = freshBackend();
+    const ownerId = await createTestUser(t, "owner@example.com");
+    const monitorId = await signedInAs(t, ownerId).mutation(
+      internal.monitors.createMonitor,
+      { url: "https://example.com/", intervalMs: 300_000 },
+    );
+
+    const strangerId = await createTestUser(t, "stranger@example.com");
+    const stranger = signedInAs(t, strangerId, "other-session");
+
+    // Authorization: a signed-in stranger sees nothing and cannot read the
+    // monitor — enforced inside the real handlers, not in the test.
+    expect(await stranger.query(internal.monitors.listMonitors, {})).toEqual(
+      [],
+    );
+    await expect(
+      stranger.query(internal.monitors.getMonitor, { monitorId }),
+    ).rejects.toThrow("This monitor belongs to another account.");
+
+    // The owner's own view works.
+    const mine = await signedInAs(t, ownerId).query(
+      internal.monitors.listMonitors,
+      {},
+    );
+    expect(mine).toHaveLength(1);
+    const detail = await signedInAs(t, ownerId).query(
+      internal.monitors.getMonitor,
+      { monitorId },
+    );
+    expect(detail.monitor.url).toBe("https://example.com/");
+    expect(detail.alertDestination).toBe("owner@example.com");
   });
 });

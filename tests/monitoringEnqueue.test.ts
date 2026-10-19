@@ -1,61 +1,100 @@
-// SitePulse alert-outbox integration test (Phase 1).
-// Real Convex handler, not a source-text check: t.mutation(internal.alerts.enqueue, ...)
-// drives the handler body against convex-test's in-memory database, so the
-// assertions below are about persisted rows and returned values, not about the
-// text of src/convex/alerts.ts. No external API key, no website probe, no
-// network, no production database access, no deployment, no fake ctx.
+// SitePulse alert-outbox integration tests (Vitest + convex-test).
+//
+// Real handlers, not source-text checks: the incidents are opened by the real
+// monitors.recordCheck failure-confirmation state machine, and alerts.enqueue
+// (src/convex/alerts.ts) runs against convex-test's in-memory backend. The
+// assertions below are about persisted rows and returned values. No external
+// API key, no website probe, no network, no production data, no deployment,
+// no mocked ctx.
+
 import { describe, expect, test } from "vitest";
 import { convexTest } from "convex-test";
 import { internal } from "../src/convex/_generated/api";
-import { enqueue } from "../src/convex/alerts";
-import { createMonitor } from "../src/convex/monitors";
+import type { Id } from "../src/convex/_generated/dataModel";
 import schema from "../src/convex/schema";
 
-// convex-test resolves function modules via Vite's import.meta.glob which is
-// not defined in Vitest's node environment, and its findModulesRoot() needs
-// a "_generated" directory next to the module root. Register the generated
-// files as the "_generated" module, then the handler modules. The resolved
-// module map is passed so moduleCache can load every handler. The returned
-// value of convexTest is the stateful test context ({ createTest, ...}, not
-// an app with defineModules.
-const generated = await import("../src/convex/_generated/api.js");
-const generatedServer = await import("../src/convex/_generated/server.js");
-
+// convex-test loads Convex function modules on demand from this map. Keys are
+// paths relative to the functions root (src/convex, per convex.json) with the
+// extension kept; at least one key must contain "_generated" so convex-test
+// can locate the root prefix. Values are lazy importers so only the modules a
+// test reaches are ever evaluated.
 const modules = {
-  "_generated": {
-    api: generated,
-    server: generatedServer,
-    dataModel: generatedServer.DataModel,
-  },
-  alerts: () => import("../src/convex/alerts.ts"),
-  monitors: () => import("../src/convex/monitors.ts"),
-  retention: () => import("../src/convex/retention.ts"),
-  probe: () => import("../src/convex/probe.ts"),
-  crons: () => import("../src/convex/crons.ts"),
-  analytics: () => import("../src/convex/analytics.ts"),
-  feedback: () => import("../src/convex/feedback.ts"),
-  http: () => import("../src/convex/http.ts"),
-  users: () => import("../src/convex/users.ts"),
-  scans: () => import("../src/convex/scans.ts"),
+  "_generated/api.js": () => import("../src/convex/_generated/api.js"),
+  "_generated/server.js": () => import("../src/convex/_generated/server.js"),
+  "monitors.ts": () => import("../src/convex/monitors.ts"),
+  "alerts.ts": () => import("../src/convex/alerts.ts"),
 };
 
-// convexTest returns a single test context; each test calls createTest().
-const testCtx = convexTest({ schema, modules });
+/** Fresh in-memory backend per test: isolated test data, nothing shared. */
+function freshBackend() {
+  return convexTest(schema, modules);
+}
 
-describe("alerts.enqueue — real handler", () => {
-  test("enqueues exactly one delivery per incident+kind and returns queued", async () => {
-    const t = testCtx.createTest();
-    const monitorId = await t.mutation(internal.monitors.createMonitor, {
-      url: "https://example.com/",
-      intervalMs: 300_000,
+/**
+ * Create a signed-in owner and one of their monitors through the real
+ * createMonitor handler.
+ */
+async function ownerWithMonitor(
+  t: ReturnType<typeof freshBackend>,
+  opts: { email?: string; alertEmail?: string } = {},
+) {
+  const userId = await t.run(async (ctx) =>
+    ctx.db.insert("users", opts.email === undefined ? {} : { email: opts.email }),
+  );
+  const owner = t.withIdentity({ subject: `${userId}|session1` });
+  const monitorId = await owner.mutation(internal.monitors.createMonitor, {
+    url: "https://example.com/",
+    intervalMs: 300_000,
+    ...(opts.alertEmail === undefined ? {} : { alertEmail: opts.alertEmail }),
+  });
+  return { owner, monitorId };
+}
+
+/**
+ * Open a real downtime incident through the real failure-confirmation state
+ * machine (one failure only raises a suspect; the second opens the incident).
+ */
+async function openIncident(
+  t: ReturnType<typeof freshBackend>,
+  monitorId: Id<"monitors">,
+) {
+  const now = Date.now();
+  const first = await t.mutation(internal.monitors.recordCheck, {
+    monitorId,
+    dispatchedAt: now,
+    checkedAt: now,
+    result: "down",
+    attempt: 1,
+  });
+  expect(first).toMatchObject({ stale: false, state: "suspect" });
+  expect(first.events).toEqual([]);
+
+  const second = await t.mutation(internal.monitors.recordCheck, {
+    monitorId,
+    dispatchedAt: now + 1,
+    checkedAt: now + 1,
+    result: "down",
+    attempt: 1,
+  });
+  expect(second).toMatchObject({ stale: false, state: "down" });
+  if (second.stale || second.events.length === 0) {
+    throw new Error("expected the second failure to open an incident");
+  }
+  return second.events[0].incidentId;
+}
+
+async function allDeliveries(t: ReturnType<typeof freshBackend>) {
+  return await t.run(async (ctx) => ctx.db.query("alertDeliveries").collect());
+}
+
+describe("alerts.enqueue — real handler (outbox writes)", () => {
+  test("an open incident queues exactly one delivery to the owner's account email", async () => {
+    const t = freshBackend();
+    const { monitorId } = await ownerWithMonitor(t, {
+      email: "ops@example.com",
     });
-    const incidentId = await t.mutation(internal.monitors.recordCheck, {
-      monitorId,
-      dispatchedAt: Date.now(),
-      checkedAt: Date.now(),
-      result: "down",
-      attempt: 1,
-    });
+    const incidentId = await openIncident(t, monitorId);
+
     const result = await t.mutation(internal.alerts.enqueue, {
       monitorId,
       incidentId,
@@ -65,71 +104,115 @@ describe("alerts.enqueue — real handler", () => {
       openedAt: Date.now(),
     });
     expect(result.queued).toBe(true);
-    expect(result.reason).toBeUndefined();
 
-    const deliveries = await t.query("alertDeliveries");
+    const deliveries = await allDeliveries(t);
     expect(deliveries).toHaveLength(1);
-    expect(deliveries[0].incidentId).toBe(incidentId);
-    expect(deliveries[0].kind).toBe("downtime");
-    expect(deliveries[0].status).toBe("queued");
-    expect(deliveries[0].to).toBe("ops@example.com");
+    expect(deliveries[0]).toMatchObject({
+      incidentId,
+      kind: "downtime",
+      to: "ops@example.com",
+      status: "queued",
+    });
     expect(deliveries[0].subject).toContain("SitePulse: example.com is DOWN");
+
+    // Audit trail: the incident records when its alert was enqueued.
+    const incident = await t.run(async (ctx) => ctx.db.get(incidentId));
+    expect(incident?.alertedAt).toBeGreaterThan(0);
   });
 
-  test("does not enqueue a duplicate for the same incident+kind (idempotency)", async () => {
-    const t = testCtx.createTest();
-    const _monitorId = await t.mutation(internal.monitors.createMonitor, {
-      url: "https://example.com/",
-      intervalMs: 300_000,
+  test("a monitor's alertEmail overrides the account email as the recipient", async () => {
+    const t = freshBackend();
+    const { monitorId } = await ownerWithMonitor(t, {
+      email: "account@example.com",
+      alertEmail: "oncall@example.net",
     });
-    const incidentId = await t.mutation(internal.monitors.recordCheck, {
-      monitorId: "monitor|11",
-      dispatchedAt: Date.now(),
-      checkedAt: Date.now(),
-      result: "down",
-      attempt: 1,
-    });
+    const incidentId = await openIncident(t, monitorId);
+
     await t.mutation(internal.alerts.enqueue, {
-      monitorId: "monitor|11",
+      monitorId,
       incidentId,
       kind: "downtime",
       url: "https://example.com/",
       host: "example.com",
       openedAt: Date.now(),
     });
-    const dup = await t.mutation(internal.alerts.enqueue, {
-      monitorId: "monitor|11",
-      incidentId,
-      kind: "downtime",
-      url: "https://example.com/",
-      host: "example.com",
-      openedAt: Date.now(),
-    });
-    expect(dup.queued).toBe(false);
-    expect(dup.reason).toBe("duplicate");
 
-    const deliveries = await t.query("alertDeliveries");
-    expect(deliveries).toHaveLength(1);
+    const [delivery] = await allDeliveries(t);
+    expect(delivery.to).toBe("oncall@example.net");
   });
 
-  test("refuses a missing incident without persisting anything", async () => {
-    const t = testCtx.createTest();
-    const monitorId = await t.mutation(internal.monitors.createMonitor, {
+  test("a monitor with no reachable recipient queues nothing", async () => {
+    const t = freshBackend();
+    // Neither an account email nor a per-monitor alertEmail.
+    const { monitorId } = await ownerWithMonitor(t);
+    const incidentId = await openIncident(t, monitorId);
+
+    const result = await t.mutation(internal.alerts.enqueue, {
+      monitorId,
+      incidentId,
+      kind: "downtime",
       url: "https://example.com/",
-      intervalMs: 300_000,
+      host: "example.com",
+      openedAt: Date.now(),
     });
+    expect(result).toEqual({ queued: false, reason: "no-recipient" });
+    expect(await allDeliveries(t)).toHaveLength(0);
+  });
+
+  test("the same incident+kind is enqueued exactly once (idempotency)", async () => {
+    const t = freshBackend();
+    const { monitorId } = await ownerWithMonitor(t, {
+      email: "ops@example.com",
+    });
+    const incidentId = await openIncident(t, monitorId);
+
+    const args = {
+      monitorId,
+      incidentId,
+      kind: "downtime" as const,
+      url: "https://example.com/",
+      host: "example.com",
+      openedAt: Date.now(),
+    };
+    const first = await t.mutation(internal.alerts.enqueue, args);
+    const duplicate = await t.mutation(internal.alerts.enqueue, args);
+
+    expect(first.queued).toBe(true);
+    expect(duplicate).toEqual({ queued: false, reason: "duplicate" });
+    expect(await allDeliveries(t)).toHaveLength(1);
+  });
+
+  test("a missing incident rejects the write and persists nothing", async () => {
+    const t = freshBackend();
+    const { monitorId } = await ownerWithMonitor(t, {
+      email: "ops@example.com",
+    });
+
+    // A real incident id whose document no longer exists.
+    const ghostIncidentId = await t.run(async (ctx) => {
+      const id = await ctx.db.insert("incidents", {
+        monitorId,
+        kind: "down",
+        open: true,
+        openedAt: Date.now(),
+        reason: "probe",
+        failureCount: 2,
+      });
+      await ctx.db.delete(id);
+      return id;
+    });
+
     await expect(
       t.mutation(internal.alerts.enqueue, {
         monitorId,
-        incidentId: "incidents|missing",
+        incidentId: ghostIncidentId,
         kind: "downtime",
         url: "https://example.com/",
         host: "example.com",
         openedAt: Date.now(),
       }),
     ).rejects.toThrow();
-
-    const deliveries = await t.query("alertDeliveries");
-    expect(deliveries).toHaveLength(0);
+    // The handler's insert was rolled back with the failed transaction.
+    expect(await allDeliveries(t)).toHaveLength(0);
   });
 });

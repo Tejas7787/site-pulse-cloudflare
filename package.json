@@ -12,6 +12,7 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "test": "bun test",
+    "test:integration": "vitest run",
     "format": "prettier --write .",
     "preview": "vite preview"
   },
