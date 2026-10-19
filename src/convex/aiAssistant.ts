@@ -4,6 +4,7 @@ import { v } from "convex/values";
 import { action } from "./_generated/server";
 import { api, internal } from "./_generated/api";
 import { buildDiagnosis, type DoctorDiagnosis } from "../lib/aiDoctor";
+import { buildFixProposals, type FixProposalResult } from "../lib/fixProposal";
 
 /**
  * SitePulse AI Assistant — server-side action.
@@ -318,5 +319,58 @@ export const explainFindings = action({
         "AI analysis did not run: model credits are not verified for this deployment. This diagnosis was produced by SitePulse's evidence-based rules engine using only this report's saved data.",
       remaining: quota.remaining,
     };
+  },
+});
+
+/* ── Phase 4 V1 — deterministic local fix proposals ───────────────────── */
+
+/**
+ * Propose concrete, copy-paste fix snippets for a saved report's findings:
+ * finding identity, target file, labeled proposed change, rationale and a
+ * unified-diff preview of proposed additions.
+ *
+ * V1 makes NO external calls of any kind — no model, no GitHub, no network,
+ * no file writes — and trusts no client-supplied finding JSON:
+ * - quota first: proposals/hour/visitor, enforced server-side here (same
+ *   rolling-window machinery as the Website Doctor);
+ * - the scan is fetched SERVER-SIDE by id, so proposals always describe the
+ *   stored document, never a client-supplied payload;
+ * - proposals come from src/lib/fixProposal.ts (deterministic, evidence-
+ *   grounded, reuse of the hosting-aware snippets the report already shows);
+ * - every preview is honestly labeled a proposed snippet — SitePulse never
+ *   read the site owner's files, so no verified before/after diff exists.
+ *
+ * Suggestions only: nothing is applied anywhere, and no score changes.
+ */
+
+export const proposeFixes = action({
+  args: {
+    scanId: v.id("scans"),
+    visitorId: v.optional(v.string()),
+  },
+  handler: async (ctx, args): Promise<
+    | { kind: "quotaExceeded"; retryAfterMs: number; limit: number }
+    | { kind: "notFound" }
+    | { kind: "ok"; result: FixProposalResult; remaining: number }
+  > => {
+    // 1. Server-side quota — consumed before any work happens.
+    const quota = await ctx.runMutation(internal.rateLimit.consumeProposalQuota, {
+      visitorId: args.visitorId,
+    });
+    if (!quota.allowed) {
+      return { kind: "quotaExceeded", retryAfterMs: quota.retryAfterMs, limit: quota.limit };
+    }
+
+    // 2. Trusted input: the stored scan, fetched by id (never client JSON).
+    const scan = await ctx.runQuery(api.scans.getScan, { id: args.scanId });
+    if (!scan) return { kind: "notFound" };
+
+    // 3. Deterministic proposals from the saved document (no external calls).
+    const result = buildFixProposals({
+      url: scan.url,
+      issues: scan.issues,
+      serverInfo: scan.serverInfo,
+    });
+    return { kind: "ok", result, remaining: quota.remaining };
   },
 });

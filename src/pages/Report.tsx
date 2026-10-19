@@ -6,6 +6,7 @@ import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import FixRecommendations from "../components/FixRecommendations";
 import WebsiteDoctor from "../components/WebsiteDoctor";
+import FixProposalPanel from "../components/FixProposalPanel";
 import {
   anchorsFor,
   canonicalActionable,
@@ -633,8 +634,10 @@ export default function Report() {
         </section>
       )}
 
-      {/* AI Website Doctor — plain-language diagnosis immediately after "Fix These First".
-          Screen-only (this wrapper is print:hidden): neither the PDF nor print output include it. */}
+      {/* AI Website Doctor — plain-language diagnosis immediately after "Fix These First",
+          then Fix Proposals — deterministic local suggestions with diff previews.
+          Both are screen-only (this wrapper is print:hidden): neither the PDF nor print
+          output include them. */}
       {id && (
         <div className="print:hidden">
           <WebsiteDoctor
@@ -643,6 +646,7 @@ export default function Report() {
             score={shownScore}
             grade={grade}
           />
+          <FixProposalPanel scanId={id as Id<"scans">} visitorId={getVisitorId()} />
         </div>
       )}
 

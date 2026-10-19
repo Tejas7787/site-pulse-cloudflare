@@ -3,6 +3,7 @@ import { internalMutation } from "./_generated/server";
 import type { MutationCtx } from "./_generated/server";
 import type { Doc } from "./_generated/dataModel";
 import { DIAGNOSIS_LIMIT_PER_HOUR, DIAGNOSIS_WINDOW_MS } from "../lib/aiDoctor";
+import { FIX_PROPOSAL_LIMIT_PER_HOUR, FIX_PROPOSAL_WINDOW_MS } from "../lib/fixProposal";
 
 /**
  * Rolling-window quotas for SitePulse's public endpoints.
@@ -25,6 +26,11 @@ export const RATE_LIMIT_MAX_AGE_MS = 24 * 60 * 60 * 1000; // 24 hours
 export const AI_DIAGNOSIS_LIMIT = DIAGNOSIS_LIMIT_PER_HOUR;
 /** Length of the AI Website Doctor window. */
 export const AI_DIAGNOSIS_WINDOW_MS = DIAGNOSIS_WINDOW_MS;
+
+/** Fix proposals allowed per visitor per window (single source: lib/fixProposal). */
+export const FIX_PROPOSAL_LIMIT = FIX_PROPOSAL_LIMIT_PER_HOUR;
+/** Length of the fix-proposal window. */
+export const FIX_PROPOSAL_WINDOW = FIX_PROPOSAL_WINDOW_MS;
 
 export interface QuotaResult {
   allowed: boolean;
@@ -110,6 +116,23 @@ export const consumeAiQuota = internalMutation({
       windowMs: AI_DIAGNOSIS_WINDOW_MS,
     });
     return { ...result, limit: AI_DIAGNOSIS_LIMIT };
+  },
+});
+
+/**
+ * Internal: called by the fix-proposal action before it builds any proposal.
+ * Server-side only — the client cannot bypass it by calling the library.
+ */
+export const consumeProposalQuota = internalMutation({
+  args: { visitorId: v.optional(v.string()) },
+  handler: async (ctx, args) => {
+    const visitor = args.visitorId?.trim().slice(0, 64) || "anonymous";
+    const result = await consumeQuota(ctx, {
+      key: `fix-proposal:${visitor}`,
+      limit: FIX_PROPOSAL_LIMIT,
+      windowMs: FIX_PROPOSAL_WINDOW,
+    });
+    return { ...result, limit: FIX_PROPOSAL_LIMIT };
   },
 });
 

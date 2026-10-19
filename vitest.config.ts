@@ -18,6 +18,7 @@ export default defineProject({
     include: [
       "tests/monitoringHandler.test.ts",
       "tests/monitoringEnqueue.test.ts",
+      "tests/fixProposalAction.test.ts",
     ],
   },
 });
