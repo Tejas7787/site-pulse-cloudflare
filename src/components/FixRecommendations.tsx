@@ -90,25 +90,32 @@ function CopyButton({ text }: { text: string }) {
   };
 
   return (
-    <button
-      onClick={handleCopy}
-      className={`inline-flex items-center gap-1.5 border-2 border-[#1a1a1a] px-2.5 py-1 text-[11px] font-bold transition-colors ${
-        copied
-          ? "bg-emerald-100 text-emerald-700"
-          : "bg-white text-[#1a1a1a] hover:bg-[#FDE68A]"
-      }`}
-      aria-label={copied ? "Copied to clipboard" : "Copy code snippet"}
-    >
-      {copied ? (
-        <>
-          <Check className="size-3" /> Copied
-        </>
-      ) : (
-        <>
-          <Copy className="size-3" /> Copy
-        </>
-      )}
-    </button>
+    <>
+      <button
+        onClick={handleCopy}
+        className={`inline-flex items-center gap-1.5 border-2 border-[#1a1a1a] px-2.5 py-1 text-[11px] font-bold transition-colors ${
+          copied
+            ? "bg-emerald-100 text-emerald-700"
+            : "bg-white text-[#1a1a1a] hover:bg-[#FDE68A]"
+        }`}
+        aria-label={copied ? "Copied to clipboard" : "Copy code snippet"}
+      >
+        {copied ? (
+          <>
+            <Check className="size-3" /> Copied
+          </>
+        ) : (
+          <>
+            <Copy className="size-3" /> Copy
+          </>
+        )}
+      </button>
+      {/* Screen readers announce the success state politely; the visual
+          "Copied" label change alone is not reliably spoken. */}
+      <span aria-live="polite" className="sr-only">
+        {copied ? "Code snippet copied to clipboard." : ""}
+      </span>
+    </>
   );
 }
 

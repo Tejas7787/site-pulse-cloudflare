@@ -12,6 +12,11 @@ import { buildFixProposals, type FixProposalResult } from "../lib/fixProposal";
  * Tries the VLY AI gateway first.  If the AI service is unavailable
  * or unauthorized, falls back to a deterministic scan-aware engine
  * that answers from the actual scan data only — no invented issues.
+ *
+ * askAssistant is quota-gated server-side (consumeAiQuota) BEFORE any paid
+ * model call, because a paid call must never be reachable without a server
+ * check in front of it. On denial it returns { quotaExceeded: true } with a
+ * human-readable answer, so the chat UI can show the limit as a message.
  */
 
 /* ── Deterministic fallback engine ───────────────────────────────────── */
@@ -192,8 +197,32 @@ export const askAssistant = action({
   args: {
     question: v.string(),
     scanData: v.string(), // JSON-stringified scan summary
+    visitorId: v.optional(v.string()),
   },
-  handler: async (_ctx, { question, scanData }) => {
+  handler: async (ctx, { question, scanData, visitorId }): Promise<{
+    answer: string;
+    quotaExceeded?: boolean;
+    retryAfterMs?: number;
+    limit?: number;
+  }> => {
+    // 0. Server-side quota — consumed FIRST, before any parsing and, above
+    //    all, before the paid model call below. Same rolling-window
+    //    mechanism as the Website Doctor (internal.rateLimit.consumeAiQuota):
+    //    the client cannot bypass it by calling the pure library. Identity is
+    //    the CLIENT-supplied visitorId (anti-abuse only — see rateLimit.ts).
+    const quota = await ctx.runMutation(internal.rateLimit.consumeAiQuota, {
+      visitorId,
+    });
+    if (!quota.allowed) {
+      const minutes = Math.max(1, Math.ceil(quota.retryAfterMs / 60_000));
+      return {
+        answer: `Question limit reached — SitePulse allows up to ${quota.limit} questions per visitor per hour. Please try again in about ${minutes} minute${minutes === 1 ? "" : "s"}.`,
+        quotaExceeded: true,
+        retryAfterMs: quota.retryAfterMs,
+        limit: quota.limit,
+      };
+    }
+
     // Questions and payloads are capped before anything else happens: the
     // assistant is public, so an unbounded argument would be a free way to
     // push arbitrary amounts of text into a paid model call.

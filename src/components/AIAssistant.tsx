@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useAction } from "convex/react";
 import { api } from "../convex/_generated/api";
+import { getVisitorId } from "../lib/analytics";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Bot,
@@ -99,14 +100,22 @@ export default function AIAssistant({
 
     try {
       const scanData = buildScanData(scan);
-      const result = await askAssistant({ question: userQuestion, scanData });
+      const result = await askAssistant({
+        question: userQuestion,
+        scanData,
+        visitorId: getVisitorId(),
+      });
 
       const responseText =
         result.answer ||
         "I wasn't able to generate a response. Please check the Fix Recommendations section below.";
 
       setAnswer(responseText);
-      setHistory((prev) => [...prev, { q: userQuestion, a: responseText }]);
+      // A quota refusal is a server-side limit notice, not a Q&A exchange —
+      // it is shown once as the reply but not kept as conversation history.
+      if (!result.quotaExceeded) {
+        setHistory((prev) => [...prev, { q: userQuestion, a: responseText }]);
+      }
     } catch (err) {
       const msg =
         err instanceof Error

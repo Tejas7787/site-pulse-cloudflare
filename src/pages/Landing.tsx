@@ -1,5 +1,6 @@
 import { useState, useRef } from "react";
 import { useAction, useMutation } from "convex/react";
+import { ConvexError } from "convex/values";
 import { api } from "../convex/_generated/api";
 import { trackEvent, getVisitorId } from "../lib/analytics";
 import FeedbackModal from "../components/FeedbackModal";
@@ -228,7 +229,7 @@ export default function Landing() {
       setResult(scanResult);
       try {
         const forSave = nullsToUndefined(scanResult) as Parameters<typeof saveScan>[0];
-        const id = await saveScan(forSave);
+        const id = await saveScan({ ...forSave, visitorId: getVisitorId() });
         setScanId(id);
         const historyEntry: ScanHistoryEntry = {
           scanId: id,
@@ -247,7 +248,15 @@ export default function Landing() {
         setHistory(getScanHistory());
         trackEvent("scan_completed", { targetUrl: scanResult.url });
         navigate(`/report/${id}`);
-      } catch { setTimeout(() => { resultsRef.current?.scrollIntoView({ behavior: "smooth" }); }, 100); }
+      } catch (err) {
+        // The scan itself succeeded — only persisting the shareable report was
+        // refused (server-side storage quota). Say so plainly instead of
+        // failing silently; the results above stay on screen.
+        if (err instanceof ConvexError && (err.data as { code?: string } | undefined)?.code === "rate_limited") {
+          setError("Your scan finished and the results are shown above, but saving the shareable report reached this browser's hourly save limit. Please try again in a few minutes.");
+        }
+        setTimeout(() => { resultsRef.current?.scrollIntoView({ behavior: "smooth" }); }, 100);
+      }
     } catch (err) {
       trackEvent("scan_failed");
       setError(err instanceof Error ? err.message : "Scan failed. Please check the URL and try again.");

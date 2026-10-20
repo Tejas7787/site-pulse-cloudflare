@@ -13,6 +13,15 @@ import { FIX_PROPOSAL_LIMIT_PER_HOUR, FIX_PROPOSAL_WINDOW_MS } from "../lib/fixP
  * unbounded amount of traffic at someone else's server. One document holds the
  * counter for one key; the window resets in place once it expires, and the
  * retention cron sweeps keys that stopped being used.
+ *
+ * IDENTITY LIMITATION — documented, not a security boundary: every key is
+ * derived from a CLIENT-supplied visitorId (localStorage `sp_vid`, see
+ * src/lib/analytics.ts). Convex actions and mutations see no request IP, and
+ * unauthenticated scanner users have no server-verifiable identity, so a
+ * caller who rotates visitorId earns a fresh bucket per call and a caller who
+ * omits it shares the single "anonymous" bucket. These quotas bound honest
+ * traffic and damp casual abuse only — they are NOT authorization. Every
+ * endpoint in front of one must stay safe to expose publicly on that basis.
  */
 
 /** Scans allowed per visitor per window. */
@@ -21,6 +30,14 @@ export const SCAN_LIMIT = 20;
 export const SCAN_WINDOW_MS = 60 * 60 * 1000; // 1 hour
 /** Longest a stale key is kept around before the cron deletes it. */
 export const RATE_LIMIT_MAX_AGE_MS = 24 * 60 * 60 * 1000; // 24 hours
+/**
+ * Saved reports (shareable scan documents) a visitor may persist per window.
+ * Deliberately twice SCAN_LIMIT: the honest flow performs at most one save
+ * per successful scan, and scans are already capped at SCAN_LIMIT, so a
+ * legitimate user can never be refused at the save step — while scripted
+ * storage spam stays bounded per identity (identity caveat above applies).
+ */
+export const SAVE_SCAN_LIMIT = 2 * SCAN_LIMIT;
 
 /** AI Website Doctor diagnoses allowed per visitor per window (single source: lib/aiDoctor). */
 export const AI_DIAGNOSIS_LIMIT = DIAGNOSIS_LIMIT_PER_HOUR;

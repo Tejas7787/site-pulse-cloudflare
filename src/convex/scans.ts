@@ -1,7 +1,8 @@
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 import { internalMutation, mutation, query } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { scanRetentionCutoff } from "./retention";
+import { consumeQuota, SAVE_SCAN_LIMIT, SCAN_WINDOW_MS } from "./rateLimit";
 
 // Bounded batch cleanup of expired scan reports.
 // Kept small and explicit so a single invocation can never blow up, and so
@@ -115,11 +116,42 @@ export const saveScan = mutation({
     totalChecksCompleted: v.number(), totalPassed: v.number(),
     totalFailed: v.number(), totalWarnings: v.number(),
     totalUnverified: v.optional(v.number()), totalNotApplicable: v.optional(v.number()),
-    overallScored: v.optional(v.boolean()), summary: v.optional(scanSummaryValidator),
+    overallScored: v.optional(v.boolean()),    summary: v.optional(scanSummaryValidator),
     scannedAt: v.number(),
+    /** Client-side visitor identity for the storage quota (see handler). */
+    visitorId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const id = await ctx.db.insert("scans", args);
+    // Storage-spam protection, server-side: this mutation is public (the
+    // anonymous scan flow must be able to persist its report), so a rolling
+    // window quota is consumed BEFORE any row is written. The key mirrors the
+    // other public endpoints and inherits the documented client-supplied
+    // identity limitation (see ./rateLimit.ts) — it bounds bulk inserts, it
+    // is not authorization. SAVE_SCAN_LIMIT is 2x SCAN_LIMIT, and the honest
+    // flow performs at most one save per successful scan, so legitimate scan
+    // completion can never be refused here.
+    const { visitorId, ...doc } = args;
+    const visitor = visitorId?.trim().slice(0, 64) || "anonymous";
+    const quota = await consumeQuota(ctx, {
+      key: `save-scan:${visitor}`,
+      limit: SAVE_SCAN_LIMIT,
+      windowMs: SCAN_WINDOW_MS,
+    });
+    if (!quota.allowed) {
+      throw new ConvexError({
+        code: "rate_limited",
+        scope: "save-scan",
+        retryAfterMs: quota.retryAfterMs,
+        limit: SAVE_SCAN_LIMIT,
+      });
+    }
+    // Only the http(s) URLs the scanner itself produces are storable — see
+    // src/convex/scan.ts (scanWebsite normalizes to `parsedUrl.href`), so this
+    // cannot reject a legitimate save while capping absurd key/value sizes.
+    if (doc.url.length > 8192 || !/^https?:\/\//i.test(doc.url)) {
+      throw new ConvexError({ code: "invalid_url", scope: "save-scan" });
+    }
+    const id = await ctx.db.insert("scans", doc);
     return id;
   },
 });
