@@ -20,6 +20,7 @@ const Terms = lazy(() => import("./pages/Legal.tsx").then((m) => ({ default: m.T
 const Admin = lazy(() => import("./pages/Admin.tsx"));
 const About = lazy(() => import("./pages/About.tsx"));
 const Monitors = lazy(() => import("./pages/Monitors.tsx"));
+const Agency = lazy(() => import("./pages/Agency.tsx"));
 
 // Simple loading fallback for route transitions
 function RouteLoading() {
@@ -159,6 +160,15 @@ createRoot(document.getElementById("root")!).render(
                 element={
                   <RequireAuth>
                     <Monitors />
+                  </RequireAuth>
+                }
+              />
+              {/* Phase 6: agency workspace (membership enforced server-side). */}
+              <Route
+                path="/agency"
+                element={
+                  <RequireAuth>
+                    <Agency />
                   </RequireAuth>
                 }
               />

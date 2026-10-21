@@ -2,7 +2,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { useAuth } from "@/hooks/use-auth";
 import { MAX_MONITORS_PER_OWNER } from "@/lib/monitoring";
-import { Activity, CheckCircle2, Clock, Gauge, LogOut, Monitor, AlertTriangle } from "lucide-react";
+import { Activity, Building2, CheckCircle2, Clock, Gauge, LogOut, Monitor, AlertTriangle } from "lucide-react";
 import { Link, useNavigate } from "react-router";
 
 
@@ -60,6 +60,9 @@ export default function Dashboard() {
           <div className="flex flex-wrap items-center gap-2 self-start">
             <Button type="button" className="cursor-pointer gap-2" asChild>
               <Link to="/monitors"><Activity className="size-4" /> Monitoring</Link>
+            </Button>
+            <Button type="button" variant="outline" className="cursor-pointer gap-2" asChild>
+              <Link to="/agency"><Building2 className="size-4" /> Agency</Link>
             </Button>
             <Button type="button" variant="outline" className="cursor-pointer gap-2" onClick={handleSignOut}>
               <LogOut className="size-4" /> Sign out

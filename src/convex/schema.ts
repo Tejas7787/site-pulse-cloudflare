@@ -422,6 +422,75 @@ const schema = defineSchema(
     })
       .index("by_owner_created", ["ownerId", "createdAt"])
       .index("by_expires_at", ["expiresAt"]),
+
+    // ── Phase 6: agency workspace ───────────────────────────────────────────
+    // One workspace per user (owner or member — never both, never two). Every
+    // member row below is the ONLY authority for "may this user act on this
+    // agency"; nothing ever trusts a client-submitted email or agency id.
+    agencies: defineTable({
+      ownerId: v.id("users"),
+      name: v.string(),
+      /** Optional branding image; http(s) URL only (validated at write time). */
+      logoUrl: v.optional(v.string()),
+      createdAt: v.number(),
+    }).index("by_owner", ["ownerId"]),
+
+    agencyMembers: defineTable({
+      agencyId: v.id("agencies"),
+      userId: v.id("users"),
+      /** "owner" manages members, invites and branding; "member" runs clients. */
+      role: v.union(v.literal("owner"), v.literal("member")),
+      createdAt: v.number(),
+    })
+      .index("by_agency", ["agencyId"])
+      .index("by_agency_user", ["agencyId", "userId"])
+      .index("by_user", ["userId"]),
+
+    clients: defineTable({
+      agencyId: v.id("agencies"),
+      name: v.string(),
+      /** Free-form contact label ("Dana @ Acme") — never an auth signal. */
+      contact: v.optional(v.string()),
+      notes: v.optional(v.string()),
+      archived: v.boolean(),
+      createdAt: v.number(),
+      updatedAt: v.number(),
+    })
+      .index("by_agency_archived", ["agencyId", "archived"])
+      .index("by_agency_created", ["agencyId", "createdAt"]),
+
+    // Assignment of an existing monitor (a website the ACTING user personally
+    // owns) to a client of their agency. Ownership of the monitor is verified
+    // server-side at assignment time; a monitor can be assigned at most once
+    // (enforced through by_monitor).
+    clientWebsites: defineTable({
+      agencyId: v.id("agencies"),
+      clientId: v.id("clients"),
+      monitorId: v.id("monitors"),
+      addedById: v.id("users"),
+      createdAt: v.number(),
+    })
+      .index("by_agency", ["agencyId"])
+      .index("by_agency_client", ["agencyId", "clientId"])
+      .index("by_monitor", ["monitorId"]),
+
+    // Team invitations: the token is a bearer secret handed to the owner to
+    // pass along out of band. Accepting needs BOTH the token AND a signed-in
+    // account whose own (already-verified) email matches the invited address —
+    // an email alone, or a leaked link alone, grants nothing.
+    agencyInvites: defineTable({
+      agencyId: v.id("agencies"),
+      email: v.string(),
+      token: v.string(),
+      invitedBy: v.id("users"),
+      createdAt: v.number(),
+      expiresAt: v.number(),
+      acceptedAt: v.optional(v.number()),
+      acceptedById: v.optional(v.id("users")),
+      revokedAt: v.optional(v.number()),
+    })
+      .index("by_token", ["token"])
+      .index("by_agency", ["agencyId"]),
   },
   { schemaValidation: false },
 );
