@@ -153,6 +153,113 @@ export const consumeProposalQuota = internalMutation({
   },
 });
 
+// ── Paid AI completion budget (deployment-wide, fail CLOSED) ─────────────────
+/**
+ * Hard cap on PAID model completions per deployment per UTC day.
+ *
+ * Why this exists: every quota above is keyed on a CLIENT-supplied visitorId
+ * (see the identity note) — by construction they cannot bound spending,
+ * because any caller can pass a fresh id and earn a fresh bucket. This budget
+ * has NO caller-controlled component: its key is the UTC date alone, so
+ * changing visitorId cannot reset it, and it is consumed immediately before
+ * every paid vly.ai.completion attempt (never for the deterministic engine,
+ * the Website Doctor, fix proposals or report generation).
+ *
+ * Deliberately the opposite failure mode of consumeQuota: a broken counter
+ * must not take the free scanner down, but for a BILLED call the safe default
+ * is no call — so consumePaidAiBudget fails closed when the row cannot be
+ * read or written.
+ *
+ * There is no provider-side cap to verify without exposing secrets:
+ * integrations.md documents usage-based billing with no queryable limit, and
+ * asking the gateway would require the secret key itself — which must stay
+ * configured anyway, because email sign-in sends its one-time codes through
+ * the same gateway (./auth/emailOtp.ts). Ops can still hard-disable paid
+ * completions without touching that key via VLY_AI_PAID_DISABLED=true.
+ *
+ * Housekeeping: one row per UTC day (`ai-paid:<date>`); the hourly cleanup
+ * cron sweeps rows older than RATE_LIMIT_MAX_AGE_MS once their date is over,
+ * and the date in the key means a swept row can never be confused with the
+ * current day's budget.
+ */
+export const PAID_AI_DAILY_LIMIT = 100;
+
+/** Key of one UTC day's budget. Takes NO caller-supplied input, by design. */
+export function paidAiBudgetKey(now: number): string {
+  return `ai-paid:${new Date(now).toISOString().slice(0, 10)}`;
+}
+
+/** Next UTC midnight after `now` — when the daily budget resets. */
+function nextUtcMidnight(now: number): number {
+  const d = new Date(now);
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1);
+}
+
+export interface PaidAiBudgetResult {
+  allowed: boolean;
+  /** Calls left in today's deployment budget (0 when denied). */
+  remaining: number;
+  /** Milliseconds until the budget resets (only meaningful when denied). */
+  retryAfterMs: number;
+  limit: number;
+  /** true only when the counter itself was unusable — no paid call either way. */
+  unavailable?: boolean;
+}
+
+/**
+ * Consume one unit of the deployment-wide paid-completion budget.
+ * FAILS CLOSED: any storage error returns `allowed: false` — an unusable
+ * counter must never authorize a billed call.
+ */
+export async function consumePaidAiBudget(
+  ctx: MutationCtx,
+  args: { now?: number; limit?: number } = {},
+): Promise<PaidAiBudgetResult> {
+  const now = args.now ?? Date.now();
+  const limit = args.limit ?? PAID_AI_DAILY_LIMIT;
+  const key = paidAiBudgetKey(now);
+  try {
+    const existing: Doc<"rateLimits"> | null = await ctx.db
+      .query("rateLimits")
+      .withIndex("by_key", (q) => q.eq("key", key))
+      .first();
+    if (!existing) {
+      await ctx.db.insert("rateLimits", { key, windowStart: now, count: 1 });
+      return { allowed: true, remaining: limit - 1, retryAfterMs: 0, limit };
+    }
+    if (existing.count >= limit) {
+      return {
+        allowed: false,
+        remaining: 0,
+        retryAfterMs: Math.max(nextUtcMidnight(now) - now, 0),
+        limit,
+      };
+    }
+    // Derive `remaining` from the row BEFORE the write: correct against a
+    // live row (tests) and an immutable snapshot (Convex) alike.
+    const remainingAfter = limit - existing.count - 1;
+    await ctx.db.patch(existing._id, { count: existing.count + 1 });
+    return {
+      allowed: true,
+      remaining: remainingAfter,
+      retryAfterMs: 0,
+      limit,
+    };
+  } catch {
+    // FAIL CLOSED — a storage problem blocks paid calls instead of enabling them.
+    return { allowed: false, remaining: 0, retryAfterMs: 60_000, limit, unavailable: true };
+  }
+}
+
+/**
+ * Internal: paid-completion budget gate. No visitor argument exists to
+ * rotate. Called by askAssistant right before any vly.ai.completion attempt.
+ */
+export const consumePaidAiQuota = internalMutation({
+  args: {},
+  handler: async (ctx) => await consumePaidAiBudget(ctx),
+});
+
 /** Internal: drop counters nobody has touched for RATE_LIMIT_MAX_AGE_MS. */
 export const cleanup = internalMutation({
   args: { maxDeletes: v.optional(v.number()) },

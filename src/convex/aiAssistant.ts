@@ -17,6 +17,14 @@ import { buildFixProposals, type FixProposalResult } from "../lib/fixProposal";
  * model call, because a paid call must never be reachable without a server
  * check in front of it. On denial it returns { quotaExceeded: true } with a
  * human-readable answer, so the chat UI can show the limit as a message.
+ *
+ * That quota is keyed on a client-supplied visitorId and therefore cannot
+ * bound SPENDING. A second, deployment-wide gate sits immediately before
+ * vly.ai.completion: the UTC-day paid budget (rateLimit.consumePaidAiQuota),
+ * which has no caller-controlled input, fails closed, and can be hard-off via
+ * VLY_AI_PAID_DISABLED without touching VLY_INTEGRATION_KEY (email sign-in
+ * shares that key — auth/emailOtp.ts). With either gate closed, the
+ * deterministic engine answers; nothing else in the product is affected.
  */
 
 /* ── Deterministic fallback engine ───────────────────────────────────── */
@@ -262,27 +270,48 @@ export const askAssistant = action({
       };
     }
 
-    // Try AI first
-    try {
-      const { vly } = await import("../lib/vly-integrations");
-
-      const systemPrompt = `You are SitePulse AI Assistant. Answer based ONLY on the scan data provided. Never invent issues, scores, or vulnerabilities. Keep answers concise (2-4 short paragraphs). Reference specific scores. Direct users to Fix Recommendations for code snippets.`;
-
-      const result = await vly.ai.completion({
-        model: "gpt-4o-mini",
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: `Scan data:\n${scanData}\n\nQuestion: ${trimmedQuestion}` },
-        ],
-        temperature: 0.3,
-        maxTokens: 500,
-      });
-
-      if (result.success && result.data?.choices?.[0]?.message?.content) {
-        return { answer: result.data.choices[0].message.content };
+    // ── Paid-call spend gate (B2): fail closed, NOT keyed on visitor input ──
+    // The per-visitor quota above is client-resettable and so cannot bound
+    // money. A paid completion additionally requires the deployment-wide
+    // UTC-day budget: keyed by date alone (no caller-supplied id to rotate),
+    // consumed only when a paid attempt is actually about to happen, and it
+    // fails CLOSED — if the counter cannot be read or written, no paid call
+    // proceeds. VLY_AI_PAID_DISABLED=true is an ops kill switch that needs no
+    // code change; VLY_INTEGRATION_KEY itself is never touched (email sign-in
+    // depends on the same key — ./auth/emailOtp.ts).
+    let paidAllowed = false;
+    if (String(process.env.VLY_AI_PAID_DISABLED ?? "").toLowerCase() !== "true") {
+      try {
+        const budget = await ctx.runMutation(internal.rateLimit.consumePaidAiQuota, {});
+        paidAllowed = budget.allowed;
+      } catch {
+        paidAllowed = false; // fail closed: a failed budget check is a "no"
       }
-    } catch {
-      // AI unavailable — fall through to deterministic engine
+    }
+
+    // Try AI first — only with an approved spend budget.
+    if (paidAllowed) {
+      try {
+        const { vly } = await import("../lib/vly-integrations");
+
+        const systemPrompt = `You are SitePulse AI Assistant. Answer based ONLY on the scan data provided. Never invent issues, scores, or vulnerabilities. Keep answers concise (2-4 short paragraphs). Reference specific scores. Direct users to Fix Recommendations for code snippets.`;
+
+        const result = await vly.ai.completion({
+          model: "gpt-4o-mini",
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: `Scan data:\n${scanData}\n\nQuestion: ${trimmedQuestion}` },
+          ],
+          temperature: 0.3,
+          maxTokens: 500,
+        });
+
+        if (result.success && result.data?.choices?.[0]?.message?.content) {
+          return { answer: result.data.choices[0].message.content };
+        }
+      } catch {
+        // AI unavailable — fall through to deterministic engine
+      }
     }
 
     // Deterministic fallback — answers from real scan data only

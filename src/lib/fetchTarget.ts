@@ -45,6 +45,12 @@ export interface FetchTargetOptions {
   userAgent?: string;
   /** SSRF guard applied to every hop (including redirects). */
   assertSafe?: (url: string) => Promise<void>;
+  /**
+   * Read the final response body (default true). Status-only callers pass
+   * false: the content is never buffered, so there is nothing to size-cap,
+   * decode or leak — only the status and redirect chain are used.
+   */
+  readBody?: boolean;
 }
 
 export const DEFAULT_USER_AGENT =
@@ -73,6 +79,7 @@ export async function fetchTarget(
     maxBytes = 5 * 1024 * 1024,
     userAgent = DEFAULT_USER_AGENT,
     assertSafe,
+    readBody = true,
   } = options;
 
   let parsed: URL;
@@ -152,22 +159,32 @@ export async function fetchTarget(
   let body = "";
   let bytes = 0;
   let truncated = false;
-  try {
-    const buffer = await response.arrayBuffer();
-    bytes = buffer.byteLength;
-    if (bytes > maxBytes) {
-      return {
-        ok: false,
-        kind: "too-large",
-        message: "The page is too large to analyze (over 5 MB). Try a different page.",
-      };
+  if (readBody) {
+    try {
+      const buffer = await response.arrayBuffer();
+      bytes = buffer.byteLength;
+      if (bytes > maxBytes) {
+        return {
+          ok: false,
+          kind: "too-large",
+          message: "The page is too large to analyze (over 5 MB). Try a different page.",
+        };
+      }
+      body = new TextDecoder("utf-8", { fatal: false }).decode(buffer);
+      const declared = response.headers.get("content-length");
+      if (declared && Number(declared) > bytes) truncated = true;
+    } catch {
+      // Body read failed / aborted mid-stream: response is incomplete.
+      truncated = true;
     }
-    body = new TextDecoder("utf-8", { fatal: false }).decode(buffer);
-    const declared = response.headers.get("content-length");
-    if (declared && Number(declared) > bytes) truncated = true;
-  } catch {
-    // Body read failed / aborted mid-stream: response is incomplete.
-    truncated = true;
+  } else {
+    // Status-only caller: never buffer the content. Cancel it so the
+    // connection is released promptly instead of being drained into memory.
+    try {
+      await response.body?.cancel();
+    } catch {
+      // The body may already be disturbed — nothing to release.
+    }
   }
 
   const headerSnapshot: Record<string, string> = {};

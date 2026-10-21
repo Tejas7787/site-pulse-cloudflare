@@ -10,6 +10,7 @@ import { makeFinding, type FindingInput } from "../lib/findings";
 import { detectSitePages } from "../lib/siteIdentity";
 import tls from "node:tls";
 import { checkUrlSafety } from "../lib/ssrf";
+import { probeOriginStatus, type OriginProbeOutcome } from "../lib/originProbe";
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
@@ -470,55 +471,62 @@ export const scanWebsite = action({
     // Sitemap & robots.txt
     // Probe origin: use the FINAL URL's origin — if the site redirected to a
     // different host/scheme, robots.txt belongs there, not at the old origin.
+    // Both probes go through probeOriginStatus → fetchTarget: redirects are
+    // followed manually and the SSRF policy (checkUrlSafety, fail closed) is
+    // applied to the initial URL and to EVERY redirect destination. A refused
+    // or failed probe maps to Unable-to-Verify with NO status, so a redirect
+    // into a loopback/private/link-local network can never leak an internal
+    // response code — or content — into report evidence.
     const origin = new URL(finalUrl).origin;
     let robotsTxtAvailable: boolean | null = null;
     let sitemapXmlAvailable: boolean | null = null;
 
-    try {
-      const robotsResp = await fetch(`${origin}/robots.txt`, { method: "GET", redirect: "follow", signal: AbortSignal.timeout(5_000) });
-      if (robotsResp.status === 200) {
-        robotsTxtAvailable = true;
-        seoChecks["robots-txt"] = "pass";
-      } else if (robotsResp.status === 403 || robotsResp.status === 429 || robotsResp.status >= 500) {
-        // The probe itself was refused → Unable to Verify, not a failure.
-        robotsTxtAvailable = null;
-        seoChecks["robots-txt"] = "not-checked";
-      } else {
-        robotsTxtAvailable = false;
-        seoChecks["robots-txt"] = "warn";
-        addIssue("SEO", "info", "nice-to-have",
-          "No robots.txt file found.",
-          "A robots.txt file helps search engines understand which pages to crawl. While not strictly required, it's considered best practice.",
-          'Create a robots.txt file at your site root (e.g., https://yourdomain.com/robots.txt) with basic crawl directives.',
-          { checkKey: "robots-txt", stage: "origin-probe", evidence: `GET ${origin}/robots.txt returned HTTP ${robotsResp.status}.` },
-        );
-      }
-    } catch {
+    const robotsProbe = await probeOriginStatus(`${origin}/robots.txt`).catch(
+      (): OriginProbeOutcome => ({ kind: "unavailable" }), // a probe must never fail the scan
+    );
+    if (robotsProbe.kind !== "status") {
       robotsTxtAvailable = null;
       seoChecks["robots-txt"] = "not-checked";
+    } else if (robotsProbe.status === 200) {
+      robotsTxtAvailable = true;
+      seoChecks["robots-txt"] = "pass";
+    } else if (robotsProbe.status === 403 || robotsProbe.status === 429 || robotsProbe.status >= 500) {
+      // The probe itself was refused → Unable to Verify, not a failure.
+      robotsTxtAvailable = null;
+      seoChecks["robots-txt"] = "not-checked";
+    } else {
+      robotsTxtAvailable = false;
+      seoChecks["robots-txt"] = "warn";
+      addIssue("SEO", "info", "nice-to-have",
+        "No robots.txt file found.",
+        "A robots.txt file helps search engines understand which pages to crawl. While not strictly required, it's considered best practice.",
+        'Create a robots.txt file at your site root (e.g., https://yourdomain.com/robots.txt) with basic crawl directives.',
+        { checkKey: "robots-txt", stage: "origin-probe", evidence: `GET ${origin}/robots.txt returned HTTP ${robotsProbe.status}.` },
+      );
     }
 
-    try {
-      const sitemapResp = await fetch(`${origin}/sitemap.xml`, { method: "GET", redirect: "follow", signal: AbortSignal.timeout(5_000) });
-      if (sitemapResp.status === 200) {
-        sitemapXmlAvailable = true;
-        seoChecks["sitemap-xml"] = "pass";
-      } else if (sitemapResp.status === 403 || sitemapResp.status === 429 || sitemapResp.status >= 500) {
-        sitemapXmlAvailable = null;
-        seoChecks["sitemap-xml"] = "not-checked";
-      } else {
-        sitemapXmlAvailable = false;
-        seoChecks["sitemap-xml"] = "warn";
-        addIssue("SEO", "info", "nice-to-have",
-          "No sitemap.xml found.",
-          "A sitemap helps search engines discover all your pages, especially for large sites or pages not well-linked internally.",
-          'Generate a sitemap.xml and submit it to Google Search Console and Bing Webmaster Tools.',
-          { checkKey: "sitemap-xml", stage: "origin-probe", evidence: `GET ${origin}/sitemap.xml returned HTTP ${sitemapResp.status}.` },
-        );
-      }
-    } catch {
+    const sitemapProbe = await probeOriginStatus(`${origin}/sitemap.xml`).catch(
+      (): OriginProbeOutcome => ({ kind: "unavailable" }), // a probe must never fail the scan
+    );
+    if (sitemapProbe.kind !== "status") {
       sitemapXmlAvailable = null;
       seoChecks["sitemap-xml"] = "not-checked";
+    } else if (sitemapProbe.status === 200) {
+      sitemapXmlAvailable = true;
+      seoChecks["sitemap-xml"] = "pass";
+    } else if (sitemapProbe.status === 403 || sitemapProbe.status === 429 || sitemapProbe.status >= 500) {
+      // The probe itself was refused → Unable to Verify, not a failure.
+      sitemapXmlAvailable = null;
+      seoChecks["sitemap-xml"] = "not-checked";
+    } else {
+      sitemapXmlAvailable = false;
+      seoChecks["sitemap-xml"] = "warn";
+      addIssue("SEO", "info", "nice-to-have",
+        "No sitemap.xml found.",
+        "A sitemap helps search engines discover all your pages, especially for large sites or pages not well-linked internally.",
+        'Generate a sitemap.xml and submit it to Google Search Console and Bing Webmaster Tools.',
+        { checkKey: "sitemap-xml", stage: "origin-probe", evidence: `GET ${origin}/sitemap.xml returned HTTP ${sitemapProbe.status}.` },
+      );
     }
 
     // ══════════════════════════════════════════════════════════════════
