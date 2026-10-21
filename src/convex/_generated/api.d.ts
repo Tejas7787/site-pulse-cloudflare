@@ -15,6 +15,8 @@ import type * as auth from "../auth.js";
 import type * as auth_emailOtp from "../auth/emailOtp.js";
 import type * as crons from "../crons.js";
 import type * as feedback from "../feedback.js";
+import type * as github from "../github.js";
+import type * as githubActions from "../githubActions.js";
 import type * as http from "../http.js";
 import type * as monitors from "../monitors.js";
 import type * as probe from "../probe.js";
@@ -38,6 +40,8 @@ declare const fullApi: ApiFromModules<{
   "auth/emailOtp": typeof auth_emailOtp;
   crons: typeof crons;
   feedback: typeof feedback;
+  github: typeof github;
+  githubActions: typeof githubActions;
   http: typeof http;
   monitors: typeof monitors;
   probe: typeof probe;

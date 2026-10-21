@@ -8,6 +8,7 @@ import {
   FIX_PROPOSAL_LIMIT_PER_HOUR,
   type FixProposal,
 } from "../lib/fixProposal";
+import GitHubRepair from "./GitHubRepair";
 
 /* ── Fix Proposals (Phase 4, V1) ─────────────────────────────────────────────
  * Sits immediately after the AI Website Doctor on the report page and offers
@@ -326,6 +327,10 @@ export default function FixProposalPanel({
                       ))}
                     </div>
                   )}
+
+                  {/* Phase 5 — GitHub Repair: code-aware proposals for the same
+                      findings, with connection, diff review and approval flow. */}
+                  <GitHubRepair scanId={scanId} proposals={proposals} />
 
                   <div className="mt-3 flex items-center gap-2">
                     <button

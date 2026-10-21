@@ -354,11 +354,74 @@ const schema = defineSchema(
       createdAt: v.number(),
       sentAt: v.optional(v.number()),
       providerId: v.optional(v.string()),
-      error: v.optional(v.string()),
-    })
-      .index("by_incident_kind", ["incidentId", "kind"])
+      error: v.optional(v.string()),    }).index("by_incident_kind", ["incidentId", "kind"])
       .index("by_status_created", ["status", "createdAt"])
       .index("by_created", ["createdAt"]),
+
+    // ── Phase 5: GitHub Repair Agent ─────────────────────────────────────
+    // One-shot OAuth states: created by an authenticated mutation, redeemed
+    // once by the HTTP callback, then deleted. Short TTL, swept by crons.
+    githubOAuthStates: defineTable({
+      state: v.string(),
+      userId: v.id("users"),
+      /** Same-origin path to return the browser to after the round trip. */
+      returnPath: v.string(),
+      createdAt: v.number(),
+      expiresAt: v.number(),
+    })
+      .index("by_state", ["state"])
+      .index("by_expires_at", ["expiresAt"]),
+
+    // Server-side GitHub connection. `token` is the user's OAuth access token:
+    // it is written ONLY by the callback action, read ONLY by server actions
+    // through an internal query, and NEVER returned by any public function.
+    githubConnections: defineTable({
+      userId: v.id("users"),
+      provider: v.literal("github"),
+      login: v.string(),
+      /** Token scopes GitHub granted — shown to the user, never the token. */
+      scopes: v.string(),
+      token: v.string(),
+      connectedAt: v.number(),
+    }).index("by_user", ["userId"]),
+
+    // A code-aware repair proposal: generated server-side from a saved scan
+    // finding + repository file, reviewed by the owner, then (and only then)
+    // usable to request a pull request. `before`/`after` stay server-side for
+    // the stale-write check; clients receive the rendered diff instead.
+    repairProposals: defineTable({
+      ownerId: v.id("users"),
+      scanId: v.id("scans"),
+      /** The scanned site's URL (for PR text); validated at save time. */
+      scanUrl: v.string(),
+      repoFullName: v.string(),
+      branch: v.string(),
+      issueKey: v.string(),
+      findingMessage: v.string(),
+      category: v.string(),
+      targetPath: v.string(),
+      fileExisted: v.boolean(),
+      before: v.string(),
+      after: v.string(),
+      diff: v.string(),
+      explanation: v.string(),
+      /** draft → (explicit approval) → pr_requested → pr_created. */
+      status: v.union(
+        v.literal("draft"),
+        v.literal("pr_requested"),
+        v.literal("pr_created"),
+      ),
+      createdAt: v.number(),
+      expiresAt: v.number(),
+      approvedAt: v.optional(v.number()),
+      prRequestedAt: v.optional(v.number()),
+      prNumber: v.optional(v.number()),
+      prUrl: v.optional(v.string()),
+      /** The NEW branch the PR used (never the source branch / default). */
+      prBranch: v.optional(v.string()),
+    })
+      .index("by_owner_created", ["ownerId", "createdAt"])
+      .index("by_expires_at", ["expiresAt"]),
   },
   { schemaValidation: false },
 );

@@ -47,4 +47,14 @@ crons.interval(
   { maxDeletes: 200 },
 );
 
+// Phase 5: expired GitHub OAuth states (single-use, 10-minute TTL) and stale
+// repair proposals (7-day TTL, they embed reviewed file contents). Bounded
+// batch; steady-state cost is one indexed no-op per hour.
+crons.interval(
+  "delete expired github rows",
+  { hours: 1 },
+  internal.github.cleanup,
+  { maxDeletes: 100 },
+);
+
 export default crons;

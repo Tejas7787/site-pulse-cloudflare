@@ -304,8 +304,11 @@ const KNOWN_HEADER_NAMES =
  * Resolve the header a finding asks for: its name comes from the finding
  * message ("Missing Referrer-Policy header."), its value from the directive
  * inside the how-to-fix text.
+ *
+ * Exported for the Phase 5 GitHub Repair Agent, which writes the same
+ * evidence-derived name/value into a repository _headers file.
  */
-function headerFromIssue(issue: RecommendationIssue): { name: string; value: string } | null {
+export function headerFromIssue(issue: RecommendationIssue): { name: string; value: string } | null {
   const named = SECURITY_HEADER_MESSAGE.exec(issue.message.trim());
   const nameGuess = named
     ? named[1].replace(/\s*\([^)]*\)\s*$/, "").trim() // "HSTS (legacy name)" → "HSTS"

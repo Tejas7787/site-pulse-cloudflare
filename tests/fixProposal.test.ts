@@ -407,7 +407,16 @@ describe("wiring — proposeFixes action and FixProposalPanel (source pins)", ()
     expect(panel).toContain("Deterministic · Suggestions only");
     expect(panel).toContain("Proposed snippets · not verified diffs");
     expect(panel).toContain("{proposal.previewNotice}");
-    expect(panel).not.toMatch(/github|octokit|pull request/i);
+    // Phase 5: the GitHub Repair section renders as its own component inside
+    // this print-hidden panel. The panel itself still never talks to GitHub:
+    // no octokit, no credentials, no client-side API calls — all GitHub I/O
+    // lives in Convex server functions.
+    expect(panel).toContain("<GitHubRepair");
+    expect(panel).not.toContain("octokit");
+    expect(panel).not.toMatch(/access_token|client_secret|Authorization:/i);
+    const gh = read("src/components/GitHubRepair.tsx");
+    expect(gh).not.toContain("octokit");
+    expect(gh).not.toMatch(/access_token|client_secret/);
   });
 
   test("the panel is mounted next to the Website Doctor inside a print:hidden wrapper", () => {
