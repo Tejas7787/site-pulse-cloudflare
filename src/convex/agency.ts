@@ -3,6 +3,7 @@ import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/s
 import type { Doc, Id } from "./_generated/dataModel";
 import { getAuthUserId } from "@convex-dev/auth/server";
 import { isValidAlertEmail } from "../lib/alerts";
+import { entitlementsOf } from "./billing";
 import {
   INVITE_TTL_MS,
   MAX_AGENCY_NAME,
@@ -256,12 +257,22 @@ export const inviteMember = mutation({
       throw new ConvexError({ code: "invalid_email", message: "Enter a valid email address." });
     }
 
+    // Plan-based member cap (Phase 7): the workspace owner's plan governs.
+    const agency = await ctx.db.get(args.agencyId);
+    if (agency === null) {
+      throw new ConvexError({ code: "not_found", message: "Workspace not found." });
+    }
+    const { limits } = await entitlementsOf(ctx, agency.ownerId);
+    const memberLimit = Math.min(MAX_MEMBERS_PER_AGENCY, limits.teamMembers);
     const members = await ctx.db
       .query("agencyMembers")
       .withIndex("by_agency", (q) => q.eq("agencyId", args.agencyId))
-      .take(MAX_MEMBERS_PER_AGENCY + 1);
-    if (members.length >= MAX_MEMBERS_PER_AGENCY) {
-      throw new ConvexError({ code: "limit", message: "This workspace already has the maximum number of members." });
+      .take(memberLimit + 1);
+    if (members.length >= memberLimit) {
+      throw new ConvexError({
+        code: "limit",
+        message: `This workspace already has the maximum number of members for its plan (${memberLimit}). Upgrade on /pricing.`,
+      });
     }
     // An existing member's account email can never be invited again.
     const alreadyMember = await Promise.all(
@@ -461,14 +472,23 @@ export const createClient = mutation({
       throw new ConvexError({ code: "invalid_notes", message: "Notes are too long (max 2,000 characters)." });
     }
 
+    // Plan-based active-client cap (Phase 7): the WORKSPACE OWNER's plan
+    // governs the workspace. Existing clients are never removed — the cap
+    // applies to creation/restoration only.
+    const agency = await ctx.db.get(args.agencyId);
+    if (agency === null) {
+      throw new ConvexError({ code: "not_found", message: "Workspace not found." });
+    }
+    const { limits } = await entitlementsOf(ctx, agency.ownerId);
+    const clientLimit = Math.min(MAX_CLIENTS_PER_AGENCY, limits.agencyClients);
     const active = await ctx.db
       .query("clients")
       .withIndex("by_agency_archived", (q) => q.eq("agencyId", args.agencyId).eq("archived", false))
-      .take(MAX_CLIENTS_PER_AGENCY + 1);
-    if (active.length >= MAX_CLIENTS_PER_AGENCY) {
+      .take(clientLimit + 1);
+    if (active.length >= clientLimit) {
       throw new ConvexError({
         code: "limit",
-        message: `Workspace limit: ${MAX_CLIENTS_PER_AGENCY} active clients. Archive one first.`,
+        message: `Workspace limit: ${clientLimit} active clients on this plan. Archive one or upgrade on /pricing.`,
       });
     }
 
@@ -533,14 +553,21 @@ export const setClientArchived = mutation({
     await requireMembership(ctx, userId, args.agencyId);
     const client = await requireClientOf(ctx, args.agencyId, args.clientId);
     if (!args.archived) {
+      // Same plan-based cap as creation: the workspace owner's plan governs.
+      const agency = await ctx.db.get(args.agencyId);
+      if (agency === null) {
+        throw new ConvexError({ code: "not_found", message: "Workspace not found." });
+      }
+      const { limits } = await entitlementsOf(ctx, agency.ownerId);
+      const clientLimit = Math.min(MAX_CLIENTS_PER_AGENCY, limits.agencyClients);
       const active = await ctx.db
         .query("clients")
         .withIndex("by_agency_archived", (q) => q.eq("agencyId", args.agencyId).eq("archived", false))
-        .take(MAX_CLIENTS_PER_AGENCY + 1);
-      if (active.length >= MAX_CLIENTS_PER_AGENCY) {
+        .take(clientLimit + 1);
+      if (active.length >= clientLimit) {
         throw new ConvexError({
           code: "limit",
-          message: `Workspace limit: ${MAX_CLIENTS_PER_AGENCY} active clients. Archive another first.`,
+          message: `Workspace limit: ${clientLimit} active clients on this plan. Archive another first.`,
         });
       }
     }
@@ -725,9 +752,15 @@ export const getDashboard = query({
 
     const active = clients.filter((c) => !c.archived);
     const allWebsites = active.flatMap((c) => c.websites);
+    // The owner's plan sizes the workspace limits shown in the UI (Phase 7).
+    const { limits } = await entitlementsOf(ctx, agency.ownerId);
     return {
       agency: publicAgency(agency),
       role: membership.role,
+      limits: {
+        clients: Math.min(MAX_CLIENTS_PER_AGENCY, limits.agencyClients),
+        members: Math.min(MAX_MEMBERS_PER_AGENCY, limits.teamMembers),
+      },
       stats: {
         activeClients: active.length,
         archivedClients: clients.length - active.length,

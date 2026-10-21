@@ -15,6 +15,28 @@ export const roleValidator = v.union(
 );
 export type Role = Infer<typeof roleValidator>;
 
+// ── Phase 7: billing & subscriptions ─────────────────────────────────────────
+// Mirrors src/lib/billing/plans.ts. Kept as validators (not imported types)
+// so the schema stays self-contained, exactly like roleValidator above.
+const planValidator = v.union(
+  v.literal("free"),
+  v.literal("pro"),
+  v.literal("agency"),
+);
+const currencyValidator = v.union(v.literal("INR"), v.literal("USD"));
+const subscriptionStatusValidator = v.union(
+  v.literal("active"),
+  v.literal("trialing"),
+  v.literal("past_due"),
+  v.literal("canceled"),
+  v.literal("expired"),
+);
+const billingProviderValidator = v.union(
+  v.literal("simulated"),
+  v.literal("stripe"),
+  v.literal("razorpay"),
+);
+
 const categoryScoreValidator = v.object({
   score: v.number(),
   passed: v.number(),
@@ -491,6 +513,90 @@ const schema = defineSchema(
     })
       .index("by_token", ["token"])
       .index("by_agency", ["agencyId"]),
+
+    // One subscription row per user (Phase 7). Absence of a row means the
+    // Free plan — existing users need no migration. Entitlements are derived
+    // server-side from this row ONLY; the client can never assert a plan,
+    // status, amount or currency (checkout amounts come from the catalog).
+    subscriptions: defineTable({
+      userId: v.id("users"),
+      plan: planValidator,
+      status: subscriptionStatusValidator,
+      currency: currencyValidator,
+      provider: billingProviderValidator,
+      /** Stripe customer / Razorpay customer id (real providers, test mode). */
+      providerCustomerId: v.optional(v.string()),
+      /** Stripe subscription / Razorpay subscription id (test mode). */
+      providerSubscriptionId: v.optional(v.string()),
+      /** Minor units (paise/cents), captured from the catalog at checkout. */
+      amountPerPeriod: v.number(),
+      currentPeriodStart: v.number(),
+      currentPeriodEnd: v.number(),
+      cancelAtPeriodEnd: v.boolean(),
+      /** Grace deadline set when a renewal failed (fail-closed window). */
+      pastDueGraceUntil: v.optional(v.number()),
+      /** Highest provider event timestamp already applied (out-of-order guard). */
+      lastProviderEventAt: v.optional(v.number()),
+      startedAt: v.number(),
+      updatedAt: v.number(),
+    })
+      .index("by_user", ["userId"])
+      .index("by_provider_sub", ["providerSubscriptionId"]),
+
+    // A pending or completed checkout. The server computes plan, currency and
+    // amount when it is created; completing a checkout never accepts those
+    // values from the client — a simulated "provider event" can only flip a
+    // row this server created for THIS user.
+    billingCheckouts: defineTable({
+      userId: v.id("users"),
+      plan: planValidator,
+      currency: currencyValidator,
+      amount: v.number(),
+      provider: billingProviderValidator,
+      status: v.union(
+        v.literal("pending"),
+        v.literal("succeeded"),
+        v.literal("failed"),
+        v.literal("expired"),
+      ),
+      failureReason: v.optional(v.string()),
+      providerCheckoutId: v.optional(v.string()),
+      createdAt: v.number(),
+      expiresAt: v.number(),
+      completedAt: v.optional(v.number()),
+    })
+      .index("by_user_created", ["userId", "createdAt"])
+      .index("by_provider_checkout", ["providerCheckoutId"]),
+
+    // Append-only billing audit log: EVERY provider event (applied, duplicate,
+    // stale or rejected) is recorded here with a dedupe key. Replays of a
+    // delivery are detected by `by_dedupe` before any state changes.
+    billingEvents: defineTable({
+      provider: billingProviderValidator,
+      providerEventId: v.string(),
+      type: v.string(),
+      dedupeKey: v.string(),
+      outcome: v.union(
+        v.literal("applied"),
+        v.literal("duplicate"),
+        v.literal("stale"),
+        v.literal("rejected"),
+        v.literal("ignored"),
+      ),
+      detail: v.optional(v.string()),
+      userId: v.optional(v.id("users")),
+      createdAt: v.number(),
+    }).index("by_dedupe", ["dedupeKey"]),
+
+    // Monthly per-account usage counters (key = "<userId>:<YYYY-MM>:<name>").
+    // Used for the saved-scans quota; kept generic so future monthly quotas
+    // reuse it. Counters are best-effort (races may overshoot by one) — they
+    // bound honest usage, they are not a security boundary.
+    billingUsage: defineTable({
+      key: v.string(),
+      count: v.number(),
+      updatedAt: v.number(),
+    }).index("by_key", ["key"]),
   },
   { schemaValidation: false },
 );

@@ -1,8 +1,10 @@
 import { ConvexError, v } from "convex/values";
+import { getAuthUserId } from "@convex-dev/auth/server";
 import { internalMutation, mutation, query } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { scanRetentionCutoff } from "./retention";
 import { consumeQuota, SAVE_SCAN_LIMIT, SCAN_WINDOW_MS } from "./rateLimit";
+import { consumeMonthlyQuota, entitlementsOf } from "./billing";
 
 // Bounded batch cleanup of expired scan reports.
 // Kept small and explicit so a single invocation can never blow up, and so
@@ -150,6 +152,29 @@ export const saveScan = mutation({
     // cannot reject a legitimate save while capping absurd key/value sizes.
     if (doc.url.length > 8192 || !/^https?:\/\//i.test(doc.url)) {
       throw new ConvexError({ code: "invalid_url", scope: "save-scan" });
+    }
+    // Phase 7: a SIGNED-IN account additionally consumes its plan's monthly
+    // saved-scan quota (server-side entitlement). The anonymous flow above is
+    // untouched — it keeps the existing per-visitor hourly rate limit. The
+    // quota is consumed only once the row is about to be written, so an
+    // invalid save never burns it.
+    const userId = await getAuthUserId(ctx);
+    if (userId !== null) {
+      const { limits, plan } = await entitlementsOf(ctx, userId);
+      const monthly = await consumeMonthlyQuota(ctx, {
+        userId,
+        name: "saved-scans",
+        limit: limits.savedScansPerMonth,
+      });
+      if (!monthly.allowed) {
+        throw new ConvexError({
+          code: "plan_limit",
+          scope: "saved-scans",
+          plan,
+          limit: monthly.limit,
+          message: `Monthly saved-scan limit reached for the ${plan} plan (${monthly.limit}/month). Upgrade on /pricing.`,
+        });
+      }
     }
     const id = await ctx.db.insert("scans", doc);
     return id;

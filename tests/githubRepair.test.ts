@@ -49,12 +49,34 @@ const modules = {
   "githubActions.ts": () => import("../src/convex/githubActions.ts"),
   "rateLimit.ts": () => import("../src/convex/rateLimit.ts"),
   "scans.ts": () => import("../src/convex/scans.ts"),
+  // Phase 7: analyzeRepair's plan gate resolves entitlements through the
+  // internal billing query, so convex-test must be able to load the module.
+  "billing.ts": () => import("../src/convex/billing.ts"),
 };
 
 const freshBackend = () => convexTest(schema, modules);
 
 async function createTestUser(t: ReturnType<typeof freshBackend>) {
-  return await t.run((ctx) => ctx.db.insert("users", {}));
+  return await t.run(async (ctx) => {
+    const userId = await ctx.db.insert("users", {});
+    // Phase 7: the Repair Agent is a paid feature — test users hold an active
+    // Pro subscription so this suite exercises repair logic, not the plan
+    // gate (the gate itself is covered in tests/billing.test.ts).
+    await ctx.db.insert("subscriptions", {
+      userId,
+      plan: "pro",
+      status: "active",
+      currency: "USD",
+      provider: "simulated",
+      amountPerPeriod: 500,
+      currentPeriodStart: Date.now(),
+      currentPeriodEnd: Date.now() + 30 * 24 * 60 * 60 * 1000,
+      cancelAtPeriodEnd: false,
+      startedAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+    return userId;
+  });
 }
 
 function signedInAs(t: ReturnType<typeof freshBackend>, userId: string) {

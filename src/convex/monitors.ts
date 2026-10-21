@@ -10,6 +10,7 @@ import {
   uptimeCheckRetentionCutoff,
 } from "./retention";
 import { isValidAlertEmail } from "../lib/alerts";
+import { entitlementsOf } from "./billing";
 import {
   DISPATCH_BATCH,
   MAX_MONITORS_PER_OWNER,
@@ -67,13 +68,17 @@ export const createMonitor = mutation({
       throw new Error("That does not look like a valid email address.");
     }
 
+    // Plan-based monitor cap (Phase 7). Free keeps exactly the Phase 2 limit
+    // (MAX_MONITORS_PER_OWNER via the plan catalog); paid plans get more.
+    // Existing monitors are never touched — the cap applies to creation only.
+    const { limits, plan } = await entitlementsOf(ctx, userId);
     const existing = await ctx.db
       .query("monitors")
       .withIndex("by_owner", (q) => q.eq("ownerId", userId))
-      .take(MAX_MONITORS_PER_OWNER + 1);
-    if (existing.length >= MAX_MONITORS_PER_OWNER) {
+      .take(limits.monitors + 1);
+    if (existing.length >= limits.monitors) {
       throw new Error(
-        `Free plan limit: ${MAX_MONITORS_PER_OWNER} monitors per account.`,
+        `${plan === "free" ? "Free" : plan === "pro" ? "Pro" : "Agency"} plan limit: ${limits.monitors} monitors per account. Upgrade on /pricing for more.`,
       );
     }
 

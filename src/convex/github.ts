@@ -5,6 +5,7 @@ import type { MutationCtx, QueryCtx } from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
 import { consumeQuota } from "./rateLimit";
+import { entitlementsOf } from "./billing";
 import {
   GH_ANALYZE_LIMIT_PER_HOUR,
   GH_OAUTH_STATE_TTL_MS,
@@ -181,6 +182,19 @@ export const approveAndRequestPr = mutation({
   args: { proposalId: v.id("repairProposals"), confirmRepoFullName: v.string() },
   handler: async (ctx, args) => {
     const userId = await requireUser(ctx);
+    // Phase 7: the Repair Agent (proposals + pull requests) is a paid feature
+    // (Pro/Agency). Checked before any proposal or repository work so a
+    // plan-limited call has no side effects at all.
+    const entitlements = await entitlementsOf(ctx, userId);
+    if (!entitlements.limits.repairFeatures) {
+      throw new ConvexError({
+        code: "plan_required",
+        plan: entitlements.plan,
+        feature: "repair",
+        message:
+          "The GitHub Repair Agent is included in Pro and Agency plans. Upgrade on /pricing.",
+      });
+    }
     const proposal = await ctx.db.get(args.proposalId);
     if (!proposal) throw new Error("This proposal no longer exists.");
     if (proposal.ownerId !== userId) {

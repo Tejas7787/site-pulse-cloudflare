@@ -14,6 +14,8 @@ import type * as alerts from "../alerts.js";
 import type * as analytics from "../analytics.js";
 import type * as auth from "../auth.js";
 import type * as auth_emailOtp from "../auth/emailOtp.js";
+import type * as billing from "../billing.js";
+import type * as billingActions from "../billingActions.js";
 import type * as crons from "../crons.js";
 import type * as feedback from "../feedback.js";
 import type * as github from "../github.js";
@@ -40,6 +42,8 @@ declare const fullApi: ApiFromModules<{
   analytics: typeof analytics;
   auth: typeof auth;
   "auth/emailOtp": typeof auth_emailOtp;
+  billing: typeof billing;
+  billingActions: typeof billingActions;
   crons: typeof crons;
   feedback: typeof feedback;
   github: typeof github;

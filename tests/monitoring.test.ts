@@ -348,11 +348,16 @@ describe("dashboard monitoring UX", () => {
     const users = read("src/convex/users.ts");
     expect(users).toContain("MAX_MONITORS_PER_OWNER");
     expect(users).not.toContain("limit: 10");
+    // Phase 7: the gate reads the plan catalog (entitlements.limits.monitors)
+    // instead of the constant directly — and Free's catalog entry IS the same
+    // MAX_MONITORS_PER_OWNER the limit query exposes, so the chain stays
+    // single-sourced: lib/monitoring → lib/billing/plans → the gate.
     const monitors = read("src/convex/monitors.ts");
-    // The gate counts owned monitors against MAX_MONITORS_PER_OWNER + 1…
-    expect(monitors).toContain("MAX_MONITORS_PER_OWNER + 1");
-    // …and its error message interpolates the same constant.
-    expect(monitors).toContain("Free plan limit: ${MAX_MONITORS_PER_OWNER}");
+    expect(monitors).toContain("entitlementsOf");
+    expect(monitors).toContain("limits.monitors + 1");
+    expect(monitors).toContain("monitors per account. Upgrade on /pricing");
+    const plans = read("src/lib/billing/plans.ts");
+    expect(plans).toContain("monitors: MAX_MONITORS_PER_OWNER");
   });
 
   test("RequireAuth still guards the monitoring route via /auth?returnTo=", () => {

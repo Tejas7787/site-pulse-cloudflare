@@ -171,6 +171,24 @@ async function seed() {
   await db.insert("agencyMembers", { agencyId: agencyA, userId: memberId, role: "member", createdAt: 2 });
   await db.insert("agencyMembers", { agencyId: agencyB, userId: outsiderId, role: "owner", createdAt: 1 });
 
+  // Phase 7: the workspace owner holds the Agency plan, so this Phase 6 suite
+  // sees the full workspace limits (20 clients / 10 members) it was written
+  // against. Plan-gated behavior itself is covered in tests/billing.test.ts.
+  const subNow = Date.now();
+  await db.insert("subscriptions", {
+    userId: ownerId,
+    plan: "agency",
+    status: "active",
+    currency: "INR",
+    provider: "simulated",
+    amountPerPeriod: 799_00,
+    currentPeriodStart: subNow,
+    currentPeriodEnd: subNow + 365 * 24 * 60 * 60 * 1000,
+    cancelAtPeriodEnd: false,
+    startedAt: subNow,
+    updatedAt: subNow,
+  });
+
   const ownerMonitor = await db.insert("monitors", {
     ownerId,
     name: "acme.com",

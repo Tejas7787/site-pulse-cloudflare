@@ -21,6 +21,7 @@ const Admin = lazy(() => import("./pages/Admin.tsx"));
 const About = lazy(() => import("./pages/About.tsx"));
 const Monitors = lazy(() => import("./pages/Monitors.tsx"));
 const Agency = lazy(() => import("./pages/Agency.tsx"));
+const Pricing = lazy(() => import("./pages/Pricing.tsx"));
 
 // Simple loading fallback for route transitions
 function RouteLoading() {
@@ -169,6 +170,15 @@ createRoot(document.getElementById("root")!).render(
                 element={
                   <RequireAuth>
                     <Agency />
+                  </RequireAuth>
+                }
+              />
+              {/* Phase 7: plans & billing (subscription state is server-derived). */}
+              <Route
+                path="/pricing"
+                element={
+                  <RequireAuth>
+                    <Pricing />
                   </RequireAuth>
                 }
               />

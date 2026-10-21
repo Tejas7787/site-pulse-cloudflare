@@ -26,7 +26,6 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import {
   MAX_CLIENTS_PER_AGENCY,
-  MAX_MEMBERS_PER_AGENCY,
   MAX_WEBSITES_PER_CLIENT,
 } from "@/lib/agency";
 
@@ -527,7 +526,10 @@ function AgencyDashboard({
               <p className="text-sm font-medium">
                 Add a client{" "}
                 <span className="font-normal text-muted-foreground">
-                  ({dashboard.stats.activeClients}/{MAX_CLIENTS_PER_AGENCY} active)
+                  ({dashboard.stats.activeClients}/{dashboard.limits.clients} active
+                  {dashboard.limits.clients < MAX_CLIENTS_PER_AGENCY
+                    ? " — upgrade on /pricing for more"
+                    : ""})
                 </span>
               </p>
               <form
@@ -747,7 +749,7 @@ function AgencyDashboard({
           <h2 className="flex items-center gap-2 text-lg font-bold">
             <ShieldCheck className="size-5" /> Team
             <span className="text-sm font-normal text-muted-foreground">
-              ({members?.length ?? 0}/{MAX_MEMBERS_PER_AGENCY})
+              ({members?.length ?? 0}/{dashboard.limits.members})
             </span>
           </h2>
 

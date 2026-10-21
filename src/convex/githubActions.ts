@@ -271,6 +271,7 @@ export const analyzeRepair = action({
     | { kind: "invalid_input"; message: string }
     | { kind: "not_found" }
     | { kind: "unsupported"; reason: string }
+    | { kind: "plan_limited"; message: string }
     | {
         kind: "ok";
         proposalId: Id<"repairProposals">;
@@ -281,6 +282,17 @@ export const analyzeRepair = action({
       }
   > => {
     const userId = await requireAuthUser(ctx);
+    // Phase 7: proposal GENERATION is also plan-gated (Pro/Agency), checked
+    // before the GitHub quota is consumed or any repository is read.
+    const entitlements = await ctx.runQuery(internal.billing.internalEntitlements, {
+      userId,
+    });
+    if (!entitlements.limits.repairFeatures) {
+      return {
+        kind: "plan_limited",
+        message: `The GitHub Repair Agent is included in Pro and Agency plans. You are on the ${entitlements.plan} plan — upgrade on /pricing.`,
+      };
+    }
     // Client strings that will be used in API paths — validate before use.
     if (!isValidRepoFullName(args.repoFullName) || !isValidBranchName(args.branch)) {
       return { kind: "invalid_input", message: "Repository or branch name is not valid." };

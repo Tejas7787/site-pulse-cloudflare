@@ -3,6 +3,11 @@ import { httpAction } from "./_generated/server";
 import { auth } from "./auth";
 import { internal } from "./_generated/api";
 import { isValidReturnPath } from "../lib/githubRepair";
+import {
+  normalizeRazorpayEvent,
+  verifyRazorpaySignature,
+} from "../lib/billing/razorpay";
+import { normalizeStripeEvent, verifyStripeSignature } from "../lib/billing/stripe";
 
 const http = httpRouter();
 
@@ -52,5 +57,102 @@ http.route({
     });
   }),
 });
+
+// ── Phase 7 — billing webhooks (Stripe & Razorpay, test-mode) ───────────────
+// Signature-verified ingestion: the provider signs the RAW body, we verify
+// against a webhook secret configured in the deployment, and only a
+// verified+normalized event is handed to internal.billing.applyProviderWebhook
+// (which deduplicates, rejects stale/out-of-order events and re-checks
+// amounts/currencies). Fail closed: no secret configured → 503, bad
+// signature → 401, neither ever reaches entitlement state.
+
+http.route({
+  path: "/billing/webhooks/stripe",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const secret = process.env.STRIPE_WEBHOOK_SECRET ?? "";
+    if (!secret) {
+      return json(503, { error: "webhook_not_configured" });
+    }
+    const payload = await request.text();
+    const signature = request.headers.get("Stripe-Signature");
+    const valid = await verifyStripeSignature(payload, signature, secret, Date.now());
+    if (!valid) {
+      return json(401, { error: "invalid_signature" });
+    }
+    const parsed = normalizeStripeEvent(payload);
+    if (!parsed.ok) {
+      // Signature was valid, but the payload is not a usable event: reject
+      // without retry semantics (retrying cannot fix a malformed body).
+      return json(400, { error: parsed.reason });
+    }
+    const result = await ctx.runMutation(internal.billing.applyProviderWebhook, {
+      provider: "stripe",
+      eventId: parsed.event.providerEventId,
+      type: parsed.event.type,
+      rawType: parsed.event.rawType,
+      occurredAt: parsed.event.occurredAt,
+      ...(parsed.event.amount !== null ? { amount: parsed.event.amount } : {}),
+      ...(parsed.event.currency !== null ? { currency: parsed.event.currency } : {}),
+      ...(parsed.event.providerSubscriptionId !== null
+        ? { providerSubscriptionId: parsed.event.providerSubscriptionId }
+        : {}),
+      ...(parsed.event.providerCheckoutId !== null
+        ? { providerCheckoutId: parsed.event.providerCheckoutId }
+        : {}),
+      ...(parsed.event.providerStatus !== null
+        ? { providerStatus: parsed.event.providerStatus }
+        : {}),
+    });
+    return json(200, { received: true, outcome: result.outcome });
+  }),
+});
+
+http.route({
+  path: "/billing/webhooks/razorpay",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const secret = process.env.RAZORPAY_WEBHOOK_SECRET ?? "";
+    if (!secret) {
+      return json(503, { error: "webhook_not_configured" });
+    }
+    const payload = await request.text();
+    const signature = request.headers.get("X-Razorpay-Signature");
+    const valid = await verifyRazorpaySignature(payload, signature, secret);
+    if (!valid) {
+      return json(401, { error: "invalid_signature" });
+    }
+    const parsed = normalizeRazorpayEvent(payload);
+    if (!parsed.ok) {
+      return json(400, { error: parsed.reason });
+    }
+    const result = await ctx.runMutation(internal.billing.applyProviderWebhook, {
+      provider: "razorpay",
+      eventId: parsed.event.providerEventId,
+      type: parsed.event.type,
+      rawType: parsed.event.rawType,
+      occurredAt: parsed.event.occurredAt,
+      ...(parsed.event.amount !== null ? { amount: parsed.event.amount } : {}),
+      ...(parsed.event.currency !== null ? { currency: parsed.event.currency } : {}),
+      ...(parsed.event.providerSubscriptionId !== null
+        ? { providerSubscriptionId: parsed.event.providerSubscriptionId }
+        : {}),
+      ...(parsed.event.providerCheckoutId !== null
+        ? { providerCheckoutId: parsed.event.providerCheckoutId }
+        : {}),
+      ...(parsed.event.providerStatus !== null
+        ? { providerStatus: parsed.event.providerStatus }
+        : {}),
+    });
+    return json(200, { received: true, outcome: result.outcome });
+  }),
+});
+
+function json(status: number, body: Record<string, unknown>): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
 
 export default http;
