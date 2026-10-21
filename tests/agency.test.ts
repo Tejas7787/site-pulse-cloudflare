@@ -2,31 +2,22 @@
 // assignment and the invitation flow.
 //
 // The Convex handlers are invoked directly through their runtime `_handler`
-// property with a fake ctx (same approach as tests/convexAuthz.test.ts);
-// getAuthUserId is module-mocked so the signed-in identity is controlled per
-// test. The fake db implements indexed queries with eq filters, order/take/
-// first/collect/unique plus insert/patch/delete, so every authorization path
-// in src/convex/agency.ts is exercised end to end.
+// property with a fake ctx (same approach as tests/convexAuthz.test.ts). The
+// real getAuthUserId only asks ctx.auth.getUserIdentity() for `null` or
+// `{ subject: "<userId>|<sessionId>" }` and splits on "|", so the fake ctx
+// implements exactly that — the REAL auth gate runs in every test, and unlike
+// mock.module nothing can leak into the other test files of this process
+// (bun 1.3.14 module mocks are process-global and broke the convex-test
+// integration suites when registered from this file). The fake db implements
+// indexed queries with eq filters, order/take/first/collect/unique plus
+// insert/patch/delete, so every authorization path in src/convex/agency.ts is
+// exercised end to end.
 
-import { afterAll, describe, expect, test, mock } from "bun:test";
+import { describe, expect, test } from "bun:test";
 
-// Keep the real module's other exports (src/convex/auth.ts loads through it).
-const realAuthServer = await import("@convex-dev/auth/server");
 let signedInAs: string | null = null;
-mock.module("@convex-dev/auth/server", () => ({
-  ...realAuthServer,
-  getAuthUserId: async () => signedInAs,
-}));
 
 const agency = await import("../src/convex/agency");
-
-// bun keeps the mocked module registry entry alive after this file finishes,
-// which would hand the fake getAuthUserId to later test files that import the
-// same package transitively (e.g. the convex-test integration suites). Hand
-// the real module back as soon as this file's tests are done.
-afterAll(() => {
-  mock.module("@convex-dev/auth/server", () => realAuthServer);
-});
 const {
   MAX_CLIENTS_PER_AGENCY,
   MAX_MEMBERS_PER_AGENCY,
@@ -49,7 +40,10 @@ function makeCtx(tables: Record<string, Row[]> = {}) {
       return null;
     },
     async insert(table: string, doc: Record<string, unknown>) {
-      const row = { ...doc, _id: `${table}|i${idSeq}`, _creationTime: idSeq } as Row;
+      // Ids must not contain "|": the real getAuthUserId recovers the user id
+      // from the auth subject "<userId>|<sessionId>" via split("|")[0], and
+      // real Convex ids are pipe-free opaque strings.
+      const row = { ...doc, _id: `${table}-i${idSeq}`, _creationTime: idSeq } as Row;
       (tables[table] ??= []).push(row);
       idSeq += 1;
       return row._id as string;
@@ -118,7 +112,16 @@ function makeCtx(tables: Record<string, Row[]> = {}) {
       return state;
     },
   };
-  return { ctx: { db }, tables, reads };
+  const ctx = {
+    db,
+    auth: {
+      // The real getAuthUserId(): null → signed out; subject "<userId>|<sid>"
+      // → the user id before the divider. No session store is consulted.
+      getUserIdentity: async () =>
+        signedInAs === null ? null : { subject: `${signedInAs}|agency-tests` },
+    },
+  };
+  return { ctx, tables, reads };
 }
 
 function handler(fn: unknown) {
@@ -870,7 +873,7 @@ describe("agency — invitation flow", () => {
     );
 
     const hireId = await s.w.ctx.db.insert("users", { email: "new.hire@northwind.test" });
-    const expired = await s.w.ctx.db.insert("agencyInvites", {
+    await s.w.ctx.db.insert("agencyInvites", {
       agencyId: s.agencyA,
       email: "new.hire@northwind.test",
       token: "a".repeat(64),

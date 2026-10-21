@@ -292,6 +292,9 @@ function AgencyDashboard({
   const updateAgency = useMutation(api.agency.updateAgency);
 
   const [selected, setSelected] = useState<Id<"clients"> | null>(null);
+  const [editingClientId, setEditingClientId] = useState<Id<"clients"> | null>(null);
+  const [editName, setEditName] = useState("");
+  const [editContact, setEditContact] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [clientName, setClientName] = useState("");
   const [clientContact, setClientContact] = useState("");
@@ -570,11 +573,71 @@ function AgencyDashboard({
               <h2 className="flex items-center gap-2 text-lg font-bold">
                 <Globe className="size-5" /> {selectedClient.name}
               </h2>
-              <Button variant="ghost" size="sm" onClick={() => setSelected(null)}>
-                Close
-              </Button>
+              <div className="flex items-center gap-1">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="gap-1.5"
+                  onClick={() => {
+                    setEditName(selectedClient.name);
+                    setEditContact(selectedClient.contact ?? "");
+                    setEditingClientId(selectedClient._id);
+                  }}
+                >
+                  <Pencil className="size-3.5" /> Edit
+                </Button>
+                <Button variant="ghost" size="sm" onClick={() => setSelected(null)}>
+                  Close
+                </Button>
+              </div>
             </div>
             <div className="flex flex-col gap-4 p-4">
+              {editingClientId === selectedClient._id && (
+                <form
+                  className="flex flex-col gap-2 border border-border bg-muted/50 p-3 sm:flex-row sm:items-center"
+                  onSubmit={(e: FormEvent) => {
+                    e.preventDefault();
+                    void run(async () => {
+                      await updateClient({
+                        agencyId,
+                        clientId: selectedClient._id,
+                        name: editName,
+                        contact: editContact.trim(),
+                      });
+                      setEditingClientId(null);
+                    }, "Could not save the client.");
+                  }}
+                >
+                  <Input
+                    value={editName}
+                    onChange={(e) => setEditName(e.target.value)}
+                    placeholder="Client name"
+                    maxLength={120}
+                    required
+                    aria-label="Client name"
+                  />
+                  <Input
+                    value={editContact}
+                    onChange={(e) => setEditContact(e.target.value)}
+                    placeholder="Contact (optional)"
+                    maxLength={120}
+                    aria-label="Client contact"
+                  />
+                  <div className="flex gap-2">
+                    <Button type="submit" size="sm">
+                      Save
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setEditingClientId(null)}
+                    >
+                      Cancel
+                    </Button>
+                  </div>
+                </form>
+              )}
               <p className="text-xs text-muted-foreground">
                 {selectedClient.contact ? `Contact: ${selectedClient.contact} · ` : ""}
                 Websites{" "}
