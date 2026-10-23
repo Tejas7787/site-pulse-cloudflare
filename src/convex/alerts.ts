@@ -15,6 +15,44 @@ import { alertSubject, alertText, isValidAlertEmail, type AlertKind } from "../l
 
 const RESEND_API_URL = "https://api.resend.com/emails";
 
+/**
+ * How long a send claim (status "sending") is respected before another
+ * sender may steal it. Long enough to cover a slow provider call, short
+ * enough that a crashed sender's row is retried within minutes.
+ */
+export const ALERT_CLAIM_TTL_MS = 5 * 60 * 1000;
+
+/**
+ * Atomically claim one queued (or abandoned-sending) delivery for sending.
+ * Convex mutations are serializable, so exactly one concurrent caller can
+ * flip a row to "sending" — the probe's opportunistic drain and the cron
+ * drain can overlap without ever delivering the same email twice.
+ */
+export const claim = internalMutation({
+  args: { id: v.id("alertDeliveries") },
+  handler: async (ctx, args) => {
+    const row = await ctx.db.get(args.id);
+    if (!row) return { claimed: false as const, reason: "missing" };
+    if (row.status === "queued") {
+      await ctx.db.patch(args.id, { status: "sending", claimedAt: Date.now() });
+      return { claimed: true as const };
+    }
+    // A "sending" row whose claim expired (sender crashed mid-flight) is
+    // reclaimable; a fresh claim means another sender is working on it.
+    if (row.status === "sending") {
+      const stale =
+        row.claimedAt === undefined ||
+        Date.now() - row.claimedAt > ALERT_CLAIM_TTL_MS;
+      if (stale) {
+        await ctx.db.patch(args.id, { status: "sending", claimedAt: Date.now() });
+        return { claimed: true as const, reclaimed: true };
+      }
+      return { claimed: false as const, reason: "in-flight" };
+    }
+    return { claimed: false as const, reason: row.status };
+  },
+});
+
 export const enqueue = internalMutation({
   args: {
     monitorId: v.id("monitors"),
@@ -77,11 +115,28 @@ export const listQueued = internalQuery({
   args: { limit: v.number() },
   handler: async (ctx, args) => {
     const limit = Math.min(Math.max(Math.floor(args.limit), 1), 50);
-    return await ctx.db
+    const now = Date.now();
+    const queued = await ctx.db
       .query("alertDeliveries")
       .withIndex("by_status_created", (q) => q.eq("status", "queued"))
       .order("asc")
       .take(limit);
+
+    // "sending" rows whose claim expired (sender crashed mid-flight) are
+    // retryable — without this sweep a crashed drain would strand the email
+    // in "sending" forever. Fresh claims belong to a live sender and are
+    // skipped, which is what keeps concurrent drains duplicate-free.
+    const sending = await ctx.db
+      .query("alertDeliveries")
+      .withIndex("by_status_created", (q) => q.eq("status", "sending"))
+      .order("asc")
+      .take(limit);
+    const staleSending = sending.filter(
+      (row) =>
+        row.claimedAt === undefined || now - row.claimedAt > ALERT_CLAIM_TTL_MS,
+    );
+
+    return [...queued, ...staleSending].slice(0, limit);
   },
 });
 
@@ -93,6 +148,7 @@ export const markSent = internalMutation({
       sentAt: Date.now(),
       ...(args.providerId ? { providerId: args.providerId } : {}),
       error: undefined,
+      claimedAt: undefined,
     });
   },
 });
@@ -104,6 +160,7 @@ export const markFailed = internalMutation({
     await ctx.db.patch(args.id, {
       status: "failed",
       error: args.error.slice(0, 300),
+      claimedAt: undefined,
     });
   },
 });
@@ -150,6 +207,14 @@ export const sendQueued = internalAction({
           error: "Gave up after 24h without successful delivery.",
         });
         failed += 1;
+        continue;
+      }
+      // Claim before sending: two concurrent drains (probe + cron) can both
+      // list the same row, but only one wins the claim, so the recipient
+      // never gets the same notification twice.
+      const claimResult: { claimed: boolean; reason?: string } =
+        await ctx.runMutation(internal.alerts.claim, { id: row._id });
+      if (!claimResult.claimed) {
         continue;
       }
       try {

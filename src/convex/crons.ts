@@ -47,6 +47,19 @@ crons.interval(
   { maxDeletes: 200 },
 );
 
+// Phase 8: drain the alert email outbox on a schedule. Probes still send
+// immediately after an event, but this cron guarantees that (a) a send that
+// failed while RESEND_API_KEY was missing, and (b) a row whose sender crashed
+// mid-flight ("sending" past its claim TTL) are retried instead of waiting
+// for the next incident to happen anywhere in the deployment. The claim in
+// alerts.claim makes the overlap with the probe's own drain duplicate-free.
+crons.interval(
+  "drain alert email outbox",
+  { minutes: 5 },
+  internal.alerts.sendQueued,
+  {},
+);
+
 // Phase 5: expired GitHub OAuth states (single-use, 10-minute TTL) and stale
 // repair proposals (7-day TTL, they embed reviewed file contents). Bounded
 // batch; steady-state cost is one indexed no-op per hour.

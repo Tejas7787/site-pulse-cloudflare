@@ -13,7 +13,6 @@ import { isValidAlertEmail } from "../lib/alerts";
 import { entitlementsOf } from "./billing";
 import {
   DISPATCH_BATCH,
-  MAX_MONITORS_PER_OWNER,
   availabilityPercent,
   clampInterval,
   dispatchJitter,
@@ -21,6 +20,12 @@ import {
   normalizeMonitorUrl,
   hostOf,
 } from "../lib/monitoring";
+import {
+  UPTIME_WINDOWS_DAYS,
+  incidentDurationMs,
+  responseTrend,
+  uptimeWindow,
+} from "../lib/uptime";
 
 // ── Phase 2: monitors, dispatch, check recording, retention ──────────────────
 // Probing runs entirely server-side: crons.ts ticks every minute,
@@ -151,11 +156,15 @@ export const listMonitors = query({
   handler: async (ctx) => {
     const userId = await getAuthUserId(ctx);
     if (userId === null) return [];
+    // Phase 7/8: the list is bounded by the plan's monitor cap (Free keeps
+    // exactly the Phase 2 constant through the catalog), so paid accounts see
+    // every monitor they are allowed to own — not the free-tier tail.
+    const { limits } = await entitlementsOf(ctx, userId);
     const monitors = await ctx.db
       .query("monitors")
       .withIndex("by_owner", (q) => q.eq("ownerId", userId))
       .order("desc")
-      .take(MAX_MONITORS_PER_OWNER + 1);
+      .take(limits.monitors + 1);
 
     const withIncidents = await Promise.all(
       monitors.map(async (monitor) => {
@@ -227,6 +236,82 @@ export const getMonitor = query({
       alertDestination: monitor.alertEmail ?? owner?.email ?? null,
       alertDelivery: deliveryStatus,
     };
+  },
+});
+
+// ── Phase 8: uptime insights ────────────────────────────────────────────────
+// Server-computed 7/30-day uptime, response-time trend and incident history
+// for ONE monitor. Ownership is enforced exactly like getMonitor (no IDOR),
+// and the heavy math lives in the pure src/lib/uptime.ts module so the server
+// and the UI can never disagree about what a window means. Insufficient data
+// is reported as `insufficient`/`partial` flags — never invented percentages.
+
+/**
+ * Hard cap on rows read per window computation. At the fastest allowed
+ * interval (5 min) a 30-day window holds 8640 checks, so this bound always
+ * covers a full window; anything beyond is truncation, which is surfaced to
+ * the caller through `truncated` and keeps the query bounded.
+ */
+const INSIGHT_MAX_CHECKS = 10_000;
+
+export const getUptimeInsights = query({
+  args: { monitorId: v.id("monitors") },
+  handler: async (ctx, args) => {
+    const monitor = await ownedMonitor(ctx, args.monitorId);
+    const now = Date.now();
+    const since = now - 30 * 24 * 60 * 60 * 1000;
+    const checks = await ctx.db
+      .query("uptimeChecks")
+      .withIndex("by_monitor_checked", (q) =>
+        q.eq("monitorId", monitor._id).gte("checkedAt", since),
+      )
+      .take(INSIGHT_MAX_CHECKS);
+
+    const truncated = checks.length >= INSIGHT_MAX_CHECKS;
+
+    return {
+      monitorId: monitor._id,
+      now,
+      truncated,
+      windows: UPTIME_WINDOWS_DAYS.map((days) => uptimeWindow(checks, now, days)),
+      trends: UPTIME_WINDOWS_DAYS.map((days) => responseTrend(checks, now, days)),
+      monitorState: monitor.state,
+      intervalMs: monitor.intervalMs,
+    };
+  },
+});
+
+/**
+ * Incident history for one monitor, newest first, with the frozen close-time
+ * duration when available and a live "so far" duration for open incidents.
+ */
+export const getIncidentHistory = query({
+  args: { monitorId: v.id("monitors"), limit: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    const monitor = await ownedMonitor(ctx, args.monitorId);
+    const limit = Math.min(Math.max(Math.floor(args.limit ?? 50), 1), 100);
+    const now = Date.now();
+    // The by_monitor_open index orders by (open, openedAt) — open incidents
+    // first, not strictly newest-first — so re-sort by start time in the
+    // handler to give the timeline a real chronological order.
+    const incidents = await ctx.db
+      .query("incidents")
+      .withIndex("by_monitor_open", (q) => q.eq("monitorId", monitor._id))
+      .take(limit);
+    incidents.sort((a, b) => b.openedAt - a.openedAt);
+
+    return incidents.map((incident) => ({
+      _id: incident._id,
+      open: incident.open,
+      openedAt: incident.openedAt,
+      recoveredAt: incident.recoveredAt ?? null,
+      reason: incident.reason,
+      failureCount: incident.failureCount,
+      durationMs: incident.durationMs ?? incidentDurationMs(incident, now),
+      // Alert audit trail: was a downtime/recovery email enqueued for it?
+      alertedAt: incident.alertedAt ?? null,
+      recoveryAlertedAt: incident.recoveryAlertedAt ?? null,
+    }));
   },
 });
 
@@ -363,6 +448,9 @@ export const recordCheck = internalMutation({
         open: false,
         closedAt: recoveredAt,
         recoveredAt,
+        // Phase 8: freeze the duration at close time so the incident history
+        // reports one unchangeable number.
+        durationMs: Math.max(0, recoveredAt - openIncident.openedAt),
       });
       events.push({
         kind: "recovery",

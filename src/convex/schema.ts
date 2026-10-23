@@ -354,6 +354,13 @@ const schema = defineSchema(
       openedAt: v.number(),
       closedAt: v.optional(v.number()),
       recoveredAt: v.optional(v.number()),
+      /**
+       * Duration recorded once, when the incident closes (recovered − opened).
+       * Phase 8: the history/timeline reads this instead of recomputing, so an
+       * incident's length can never drift after the fact. Open incidents
+       * expose a live duration derived from `openedAt` instead.
+       */
+      durationMs: v.optional(v.number()),
       reason: v.string(),
       failureCount: v.number(),
       /** Set once the outage email for this incident has been enqueued. */
@@ -365,6 +372,10 @@ const schema = defineSchema(
 
     // Outbox for downtime/recovery emails: written first (idempotently), then
     // sent by an action — a side effect Convex never auto-retries for us.
+    // "sending" is a claim taken atomically before the provider call so two
+    // concurrent senders (a probe and the drain cron) can never deliver the
+    // same notification twice; a claim older than ALERT_CLAIM_TTL_MS is
+    // considered abandoned and reclaimable.
     alertDeliveries: defineTable({
       monitorId: v.id("monitors"),
       incidentId: v.id("incidents"),
@@ -372,8 +383,15 @@ const schema = defineSchema(
       to: v.string(),
       subject: v.string(),
       text: v.string(),
-      status: v.union(v.literal("queued"), v.literal("sent"), v.literal("failed")),
+      status: v.union(
+        v.literal("queued"),
+        v.literal("sending"),
+        v.literal("sent"),
+        v.literal("failed"),
+      ),
       createdAt: v.number(),
+      /** When the current send claim was taken (status "sending" only). */
+      claimedAt: v.optional(v.number()),
       sentAt: v.optional(v.number()),
       providerId: v.optional(v.string()),
       error: v.optional(v.string()),    }).index("by_incident_kind", ["incidentId", "kind"])
