@@ -7,6 +7,45 @@ export type AlertKind = "downtime" | "recovery";
 
 const EMAIL_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 
+// ── Sender address resolution (Phase 9D: Resend configuration) ──────────────
+// Resend requires the From domain to be verified for the account. This
+// project's verified domain is alerts.tejasdev.xyz, so it is the default
+// sender whenever no operator-supplied value is configured. The Convex
+// deployment supplies the override through the server-side environment
+// variables RESEND_FROM_EMAIL (canonical) or RESEND_FROM (legacy name kept
+// for compatibility) — those are read ONLY inside Convex functions
+// (src/convex/alerts.ts, src/convex/integrations.ts); this module stays pure
+// so the resolution logic is unit-testable and can never touch an env value
+// in the browser bundle.
+
+/** Verified-sender default: used when no sender env var is configured. */
+export const DEFAULT_ALERT_FROM = "SitePulse <alerts@tejasdev.xyz>";
+
+/** Accepts `email@example.com` or a display form `Name <email@example.com>`. */
+const FROM_SHAPE = /^(?:[^<>"\n]*<)?[^\s@<>"\n]+@[^\s@<>"\n]+\.[^\s@<>"\n]{2,}>?$/;
+
+/** True when a configured From candidate looks like a usable sender address. */
+export function isPlausibleFrom(value: string | null | undefined): boolean {
+  return typeof value === "string" && FROM_SHAPE.test(value.trim());
+}
+
+/**
+ * Resolve the From header for outgoing mail. Candidates are checked in
+ * priority order and the first plausible one wins; when none is configured
+ * (or the configured value is garbage), the verified default is used so a
+ * mistyped env var can never send mail from an unverified domain.
+ * Deliberately takes values as ARGUMENTS — it never reads process.env.
+ */
+export function resolveAlertFrom(
+  candidates: Array<string | null | undefined>,
+): string {
+  for (const candidate of candidates) {
+    const trimmed = candidate?.trim();
+    if (trimmed && FROM_SHAPE.test(trimmed)) return trimmed;
+  }
+  return DEFAULT_ALERT_FROM;
+}
+
 /** Validate a recipient address (same deliberately simple shape as feedback). */
 export function isValidAlertEmail(email: string): boolean {
   return email.length <= 254 && EMAIL_SHAPE.test(email);

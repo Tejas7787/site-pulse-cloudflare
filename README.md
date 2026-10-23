@@ -95,8 +95,13 @@ With the variable unset (the default), `startCheckout` and
 1. Create an API key at resend.com and set it:
    `npx convex env set RESEND_API_KEY re_…`
 2. Optional custom sender (requires a verified domain in Resend):
-   `npx convex env set RESEND_FROM "SitePulse <alerts@yourdomain.com>"`
-   Default sender is `SitePulse <onboarding@resend.dev>`.
+   `npx convex env set RESEND_FROM_EMAIL "SitePulse <alerts@yourdomain.com>"`
+   (The legacy name `RESEND_FROM` is still honored.) If neither is set — or
+   the value is malformed — mail is sent from the project's verified default
+   sender, `SitePulse <alerts@tejasdev.xyz>`.
+   To smoke-test delivery without a real incident, a signed-in operator can
+   call the authenticated action `alerts:sendTestEmail` with `{"to": "you@…"}`
+   (3 per hour per account; refuses anonymous callers).
 3. Test end to end: create a monitor for a URL that returns an error (or pause
    the target) — after two consecutive failed checks you receive the DOWNTIME
    email; once two consecutive checks succeed again you receive the RECOVERY

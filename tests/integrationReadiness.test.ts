@@ -22,6 +22,8 @@ import { api, internal } from "../src/convex/_generated/api";
 import type { Id } from "../src/convex/_generated/dataModel";
 import schema from "../src/convex/schema";
 import { ALERT_MAX_AGE_MS } from "../src/lib/monitoring";
+import { DEFAULT_ALERT_FROM, resolveAlertFrom } from "../src/lib/alerts";
+import { TEST_EMAIL_LIMIT_PER_HOUR } from "../src/convex/alerts";
 
 const modules = {
   "_generated/api.js": () => import("../src/convex/_generated/api.js"),
@@ -542,5 +544,305 @@ describe("getIntegrationStatus (focus: safe configuration checks)", () => {
         expect(status.email.resendConfigured).toBe(false);
       },
     );
+  });
+});
+
+/* ── 6. Resend sender resolution (Phase 9D) ────────────────────────────────── */
+
+describe("alert sender resolution (RESEND_FROM_EMAIL → RESEND_FROM → verified default)", () => {
+  test("pure precedence: canonical name wins, then legacy, then the verified default", () => {
+    expect(
+      resolveAlertFrom(["SitePulse <alerts@tejasdev.xyz>", "legacy@x.test"]),
+    ).toBe("SitePulse <alerts@tejasdev.xyz>");
+    expect(resolveAlertFrom([undefined, "SitePulse <legacy@x.test>"])).toBe(
+      "SitePulse <legacy@x.test>",
+    );
+    expect(resolveAlertFrom(["  padded@example.com  "])).toBe("padded@example.com");
+
+    // The project default IS the verified sender domain (requirement).
+    expect(DEFAULT_ALERT_FROM).toBe("SitePulse <alerts@tejasdev.xyz>");
+    expect(resolveAlertFrom([])).toBe(DEFAULT_ALERT_FROM);
+    expect(resolveAlertFrom([undefined, undefined])).toBe(DEFAULT_ALERT_FROM);
+  });
+
+  test("malformed configured values fall through instead of sending from a bad From", () => {
+    expect(resolveAlertFrom(["not-an-address", "ok@x.test"])).toBe("ok@x.test");
+    expect(resolveAlertFrom(["Name <>", ""])).toBe(DEFAULT_ALERT_FROM);
+    expect(resolveAlertFrom(["spaces in@here.example"])).toBe(DEFAULT_ALERT_FROM);
+  });
+
+  const originalFetch = globalThis.fetch;
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  /** One real queued delivery, reused from the outbox suite above. */
+  async function queueOne(t: ReturnType<typeof freshBackend>) {
+    const userId = await t.run(async (ctx) =>
+      ctx.db.insert("users", { email: "alerts@x.test" }),
+    );
+    const monitorId = (await t.run(async (ctx) =>
+      ctx.db.insert("monitors", {
+        ownerId: userId,
+        name: "example.com",
+        url: "https://example.com/",
+        host: "example.com",
+        intervalMs: 300_000,
+        status: "active",
+        state: "down",
+        nextCheckAt: 0,
+        consecutiveFailures: 0,
+        consecutiveSuccesses: 0,
+        createdAt: Date.now(),
+      }),
+    )) as Id<"monitors">;
+    const incidentId = (await t.run(async (ctx) =>
+      ctx.db.insert("incidents", {
+        monitorId,
+        kind: "down",
+        openedAt: Date.now() - 60_000,
+        open: true,
+        reason: "http-503",
+        failureCount: 2,
+      }),
+    )) as Id<"incidents">;
+    await t.mutation(internal.alerts.enqueue, {
+      monitorId,
+      incidentId,
+      kind: "downtime",
+      url: "https://example.com/",
+      host: "example.com",
+      openedAt: Date.now() - 60_000,
+      reason: "http-503",
+    });
+  }
+
+  function stubProvider(calls: Array<Record<string, unknown>>) {
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push(JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>);
+      return new Response(JSON.stringify({ id: `email_${calls.length}` }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }) as typeof fetch;
+  }
+
+  test("outbox drain sends with RESEND_FROM_EMAIL as the From (stubbed provider)", async () => {
+    await withEnv(
+      {
+        RESEND_API_KEY: "re_test_fake_key",
+        RESEND_FROM_EMAIL: "SitePulse <alerts@tejasdev.xyz>",
+        RESEND_FROM: undefined,
+      },
+      async () => {
+        const calls: Array<Record<string, unknown>> = [];
+        stubProvider(calls);
+        const t = freshBackend();
+        await queueOne(t);
+        const res = await t.action(internal.alerts.sendQueued, {});
+        expect(res.sent).toBe(1);
+        expect(calls).toHaveLength(1);
+        expect(calls[0].from).toBe("SitePulse <alerts@tejasdev.xyz>");
+      },
+    );
+  });
+
+  test("legacy RESEND_FROM still honored; with neither, the verified default is used", async () => {
+    await withEnv(
+      {
+        RESEND_API_KEY: "re_test_fake_key",
+        RESEND_FROM_EMAIL: undefined,
+        RESEND_FROM: "SitePulse <legacy@x.test>",
+      },
+      async () => {
+        const calls: Array<Record<string, unknown>> = [];
+        stubProvider(calls);
+        const t = freshBackend();
+        await queueOne(t);
+        await t.action(internal.alerts.sendQueued, {});
+        expect(calls[0].from).toBe("SitePulse <legacy@x.test>");
+      },
+    );
+
+    await withEnv(
+      {
+        RESEND_API_KEY: "re_test_fake_key",
+        RESEND_FROM_EMAIL: undefined,
+        RESEND_FROM: undefined,
+      },
+      async () => {
+        const calls: Array<Record<string, unknown>> = [];
+        stubProvider(calls);
+        const t = freshBackend();
+        await queueOne(t);
+        await t.action(internal.alerts.sendQueued, {});
+        expect(calls[0].from).toBe(DEFAULT_ALERT_FROM);
+      },
+    );
+  });
+
+  test("status reports sender presence under either name — values never echoed", async () => {
+    await withEnv(
+      {
+        RESEND_API_KEY: "re_canary_secretvalue",
+        RESEND_FROM_EMAIL: "SitePulse <alerts@tejasdev.xyz>",
+        RESEND_FROM: undefined,
+      },
+      async () => {
+        const t = freshBackend();
+        const status = await t.query(api.integrations.getIntegrationStatus, {});
+        expect(status.email.resendConfigured).toBe(true);
+        expect(status.email.customFromConfigured).toBe(true);
+        const serialized = JSON.stringify(status);
+        expect(serialized).not.toContain("re_canary_secretvalue");
+        // The configured From VALUE is an env value too — never echoed.
+        expect(serialized).not.toContain("alerts@tejasdev.xyz");
+      },
+    );
+
+    await withEnv(
+      { RESEND_API_KEY: undefined, RESEND_FROM_EMAIL: undefined, RESEND_FROM: undefined },
+      async () => {
+        const t = freshBackend();
+        const status = await t.query(api.integrations.getIntegrationStatus, {});
+        expect(status.email.customFromConfigured).toBe(false);
+      },
+    );
+  });
+});
+
+/* ── 7. Authenticated test-email workflow (Phase 9D) ───────────────────────── */
+
+describe("sendTestEmail (safe, authenticated, server-side only)", () => {
+  const originalFetch = globalThis.fetch;
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  function stubProvider(calls: Array<Record<string, unknown>>, status = 200) {
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push(JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>);
+      return new Response(JSON.stringify({ id: `email_${calls.length}` }), {
+        status,
+        headers: { "content-type": "application/json" },
+      });
+    }) as typeof fetch;
+  }
+
+  test("anonymous callers are refused before any network contact", async () => {
+    await withEnv({ RESEND_API_KEY: "re_test_fake_key" }, async () => {
+      const calls: Array<Record<string, unknown>> = [];
+      stubProvider(calls);
+      const t = freshBackend();
+      try {
+        await t.action(api.alerts.sendTestEmail, { to: "operator@x.test" });
+        throw new Error("expected auth_required");
+      } catch (err) {
+        expect(err).toBeInstanceOf(ConvexError);
+        expect((err as ConvexError<{ code?: string }>).data.code).toBe("auth_required");
+      }
+      expect(calls).toHaveLength(0);
+    });
+  });
+
+  test("missing RESEND_API_KEY refuses honestly — no env values in the error", async () => {
+    await withEnv(
+      { RESEND_API_KEY: undefined, RESEND_FROM_EMAIL: "SitePulse <alerts@tejasdev.xyz>" },
+      async () => {
+        const t = freshBackend();
+        const userId = await createTestUser(t, "operator@x.test");
+        const asUser = signedInAs(t, userId);
+        try {
+          await asUser.action(api.alerts.sendTestEmail, { to: "operator@x.test" });
+          throw new Error("expected not_configured");
+        } catch (err) {
+          expect(err).toBeInstanceOf(ConvexError);
+          const data = (err as ConvexError<{ code?: string; message?: string }>).data;
+          expect(data.code).toBe("not_configured");
+          expect(data.message).toContain("RESEND_API_KEY");
+          expect(data.message).not.toContain("alerts@tejasdev.xyz");
+        }
+      },
+    );
+  });
+
+  test("signed-in success: sends through the shared helper with the resolved From", async () => {
+    await withEnv(
+      {
+        RESEND_API_KEY: "re_supersecret_canary",
+        RESEND_FROM_EMAIL: "SitePulse <alerts@tejasdev.xyz>",
+      },
+      async () => {
+        const calls: Array<Record<string, unknown>> = [];
+        stubProvider(calls);
+        const t = freshBackend();
+        const userId = await createTestUser(t, "operator@x.test");
+
+        const res = await signedInAs(t, userId).action(api.alerts.sendTestEmail, {
+          to: "operator@x.test",
+        });
+        expect(res.ok).toBe(true);
+        if (res.ok) expect(res.providerId).toBe("email_1");
+
+        expect(calls).toHaveLength(1);
+        expect(calls[0].from).toBe("SitePulse <alerts@tejasdev.xyz>");
+        expect(calls[0].to).toEqual(["operator@x.test"]);
+        expect(String(calls[0].subject)).toContain("test email");
+
+        // Secret canary: the API key never appears in the returned result.
+        expect(JSON.stringify(res)).not.toContain("re_supersecret_canary");
+      },
+    );
+  });
+
+  test("invalid recipient is rejected; quota bounds sends per user", async () => {
+    await withEnv({ RESEND_API_KEY: "re_test_fake_key" }, async () => {
+      const calls: Array<Record<string, unknown>> = [];
+      stubProvider(calls);
+      const t = freshBackend();
+      const userId = await createTestUser(t, "operator@x.test");
+      const asUser = signedInAs(t, userId);
+
+      await expect(
+        asUser.action(api.alerts.sendTestEmail, { to: "not-an-email" }),
+      ).rejects.toThrow();
+      expect(calls).toHaveLength(0);
+
+      for (let i = 0; i < TEST_EMAIL_LIMIT_PER_HOUR; i++) {
+        const ok = await asUser.action(api.alerts.sendTestEmail, {
+          to: "operator@x.test",
+        });
+        expect(ok.ok).toBe(true);
+      }
+      expect(calls).toHaveLength(TEST_EMAIL_LIMIT_PER_HOUR);
+
+      try {
+        await asUser.action(api.alerts.sendTestEmail, { to: "operator@x.test" });
+        throw new Error("expected rate_limited");
+      } catch (err) {
+        expect(err).toBeInstanceOf(ConvexError);
+        expect((err as ConvexError<{ code?: string }>).data.code).toBe("rate_limited");
+      }
+      // The denied call never reached the provider.
+      expect(calls).toHaveLength(TEST_EMAIL_LIMIT_PER_HOUR);
+    });
+  });
+
+  test("a provider failure is reported without throwing or leaking the key", async () => {
+    await withEnv({ RESEND_API_KEY: "re_supersecret_canary" }, async () => {
+      const calls: Array<Record<string, unknown>> = [];
+      stubProvider(calls, 500);
+      const t = freshBackend();
+      const userId = await createTestUser(t, "operator@x.test");
+
+      const res = await signedInAs(t, userId).action(api.alerts.sendTestEmail, {
+        to: "operator@x.test",
+      });
+      expect(res.ok).toBe(false);
+      if (!res.ok) {
+        expect(res.error).toContain("HTTP 500");
+        expect(res.error).not.toContain("re_supersecret_canary");
+      }
+    });
   });
 });

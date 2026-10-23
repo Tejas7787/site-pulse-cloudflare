@@ -39,7 +39,13 @@ export const getIntegrationStatus = query({
       },
       email: {
         resendConfigured: Boolean(process.env.RESEND_API_KEY),
-        customFromConfigured: Boolean(process.env.RESEND_FROM),
+        // Sender override configured under either supported name
+        // (RESEND_FROM_EMAIL canonical, RESEND_FROM legacy). Value is
+        // deliberately NOT echoed — presence only.
+        customFromConfigured: Boolean(
+          process.env.RESEND_FROM_EMAIL?.trim() ||
+            process.env.RESEND_FROM?.trim(),
+        ),
       },
     };
   },

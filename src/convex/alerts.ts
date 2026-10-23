@@ -1,9 +1,22 @@
-import { v } from "convex/values";
-import { internalAction, internalMutation, internalQuery } from "./_generated/server";
+import { ConvexError, v } from "convex/values";
+import { getAuthUserId } from "@convex-dev/auth/server";
+import {
+  action,
+  internalAction,
+  internalMutation,
+  internalQuery,
+} from "./_generated/server";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { ALERT_MAX_AGE_MS } from "../lib/monitoring";
-import { alertSubject, alertText, isValidAlertEmail, type AlertKind } from "../lib/alerts";
+import {
+  alertSubject,
+  alertText,
+  isValidAlertEmail,
+  resolveAlertFrom,
+  type AlertKind,
+} from "../lib/alerts";
+import { consumeQuota } from "./rateLimit";
 
 // ── Downtime / recovery email outbox ────────────────────────────────────────
 // Pattern: record first, send second. recordCheck() reports an incident
@@ -165,6 +178,46 @@ export const markFailed = internalMutation({
   },
 });
 
+/**
+ * POST one email to Resend. Shared by the outbox drain (sendQueued) and the
+ * authenticated test send (sendTestEmail), so both use the same headers,
+ * sender resolution and truncation rules.
+ *
+ * SECURITY: the API key is passed in and used only for the Authorization
+ * header of this one request. It is never logged, stored, or included in the
+ * returned error (provider response bodies are truncated like markFailed).
+ */
+async function postToResend(
+  apiKey: string,
+  from: string,
+  payload: { to: string[]; subject: string; text: string },
+): Promise<{ ok: true; providerId?: string } | { ok: false; error: string }> {
+  try {
+    const response = await fetch(RESEND_API_URL, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ from, ...payload }),
+    });
+    if (response.ok) {
+      const data = (await response.json().catch(() => ({}))) as { id?: string };
+      return { ok: true, ...(data.id ? { providerId: data.id } : {}) };
+    }
+    const body = await response.text().catch(() => "");
+    return {
+      ok: false,
+      error: `HTTP ${response.status}${body ? `: ${body.slice(0, 160)}` : ""}`,
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      error: String((err as Error)?.message ?? err).slice(0, 160),
+    };
+  }
+}
+
 export const sendQueued = internalAction({
   args: {},
   handler: async (
@@ -196,7 +249,13 @@ export const sendQueued = internalAction({
       return { sent: 0, failed: expired, pending: queued.length - expired, reason: "not_configured" };
     }
 
-    const from = process.env.RESEND_FROM?.trim() || "SitePulse <onboarding@resend.dev>";
+    // Canonical sender var is RESEND_FROM_EMAIL; RESEND_FROM stays supported
+    // for older setups. resolveAlertFrom falls back to the project's verified
+    // sender domain when neither is set (or a value is malformed).
+    const from = resolveAlertFrom([
+      process.env.RESEND_FROM_EMAIL,
+      process.env.RESEND_FROM,
+    ]);
     let sent = 0;
     let failed = 0;
 
@@ -217,39 +276,21 @@ export const sendQueued = internalAction({
       if (!claimResult.claimed) {
         continue;
       }
-      try {
-        const response = await fetch(RESEND_API_URL, {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${apiKey}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            from,
-            to: [row.to],
-            subject: row.subject,
-            text: row.text,
-          }),
+      const result = await postToResend(apiKey, from, {
+        to: [row.to],
+        subject: row.subject,
+        text: row.text,
+      });
+      if (result.ok) {
+        await ctx.runMutation(internal.alerts.markSent, {
+          id: row._id,
+          ...(result.providerId ? { providerId: result.providerId } : {}),
         });
-        if (response.ok) {
-          const data = (await response.json().catch(() => ({}))) as { id?: string };
-          await ctx.runMutation(internal.alerts.markSent, {
-            id: row._id,
-            ...(data.id ? { providerId: data.id } : {}),
-          });
-          sent += 1;
-        } else {
-          const body = await response.text().catch(() => "");
-          await ctx.runMutation(internal.alerts.markFailed, {
-            id: row._id,
-            error: `HTTP ${response.status}${body ? `: ${body.slice(0, 160)}` : ""}`,
-          });
-          failed += 1;
-        }
-      } catch (err) {
+        sent += 1;
+      } else {
         await ctx.runMutation(internal.alerts.markFailed, {
           id: row._id,
-          error: String((err as Error)?.message ?? err).slice(0, 160),
+          error: result.error,
         });
         failed += 1;
       }
@@ -262,6 +303,110 @@ export const sendQueued = internalAction({
 /** Exposed for tests/UI badges: is an address acceptable as a recipient? */
 export const isUsableRecipient = (email: string | null | undefined): boolean =>
   typeof email === "string" && isValidAlertEmail(email);
+
+// ── Phase 9D: authenticated one-off test email ────────────────────────────
+// Lets a SIGNED-IN operator verify the whole Resend path (env vars, sender
+// domain, provider account) with a single message, without touching a real
+// monitor or incident. Safety properties:
+//  - requires Convex Auth (getAuthUserId) — never callable anonymously, so
+//    this can never be used as an open relay;
+//  - bounded by a server-side per-user quota (consumeQuota), so even a
+//    signed-in account cannot pump mail;
+//  - recipient is validated with the same rule as real alert recipients;
+//  - the API key and the configured From VALUE never appear in the result —
+//    only an ok/providerId (success) or a truncated provider error (failure).
+
+/** Test emails allowed per signed-in user per hour. */
+export const TEST_EMAIL_LIMIT_PER_HOUR = 3;
+/** Length of the test-email window. */
+export const TEST_EMAIL_WINDOW_MS = 60 * 60 * 1000;
+
+/** Internal: consume one test-email quota unit for a user (server-side). */
+export const consumeTestEmailQuota = internalMutation({
+  args: { userId: v.id("users") },
+  handler: async (ctx, args) =>
+    consumeQuota(ctx, {
+      key: `test-email:${args.userId}`,
+      limit: TEST_EMAIL_LIMIT_PER_HOUR,
+      windowMs: TEST_EMAIL_WINDOW_MS,
+    }),
+});
+
+export type TestEmailResult =
+  | { ok: true; providerId?: string }
+  | { ok: false; error: string };
+
+export const sendTestEmail = action({
+  args: { to: v.string() },
+  handler: async (ctx, args): Promise<TestEmailResult> => {
+    // 1. Authentication: only a signed-in account may trigger a send.
+    const userId = await getAuthUserId(ctx);
+    if (userId === null) {
+      throw new ConvexError({
+        code: "auth_required",
+        message: "Sign in to send a test email.",
+      });
+    }
+
+    // 2. Recipient shape (same rule as monitor alert recipients).
+    if (!isValidAlertEmail(args.to)) {
+      throw new ConvexError({
+        code: "invalid_recipient",
+        message: "Enter a valid recipient email address.",
+      });
+    }
+
+    // 3. Server-side per-user quota (denied BEFORE any provider contact).
+    const quota: { allowed: boolean; retryAfterMs: number } =
+      await ctx.runMutation(internal.alerts.consumeTestEmailQuota, { userId });
+    if (!quota.allowed) {
+      throw new ConvexError({
+        code: "rate_limited",
+        message: "Test-email limit reached. Try again later.",
+        retryAfterMs: quota.retryAfterMs,
+      });
+    }
+
+    // 4. Configuration check — honest refusal, no env values in the error.
+    const apiKey = process.env.RESEND_API_KEY;
+    if (!apiKey) {
+      throw new ConvexError({
+        code: "not_configured",
+        message:
+          "Email sending is not configured on this deployment (RESEND_API_KEY is missing).",
+      });
+    }
+
+    // 5. Send through the shared Resend helper (identical headers/From
+    //    resolution as real downtime/recovery alerts).
+    const from = resolveAlertFrom([
+      process.env.RESEND_FROM_EMAIL,
+      process.env.RESEND_FROM,
+    ]);
+    const sentAt = new Date().toISOString().replace("T", " ").slice(0, 19);
+    const result = await postToResend(apiKey, from, {
+      to: [args.to],
+      subject: "SitePulse: test email (delivery check)",
+      text: [
+        "This is a SitePulse email delivery test.",
+        "",
+        `If you received this, this deployment can deliver downtime and`,
+        `recovery alerts to ${args.to}.`,
+        "",
+        `Sent: ${sentAt} UTC`,
+        "",
+        "No action is needed. If this message was unexpected, you can",
+        "ignore it — no monitor data was involved in this test.",
+      ].join("\n"),
+    });
+
+    if (!result.ok) return { ok: false as const, error: result.error };
+    return {
+      ok: true as const,
+      ...(result.providerId ? { providerId: result.providerId } : {}),
+    };
+  },
+});
 
 export type AlertKindExport = AlertKind;
 export type QueuedDelivery = Doc<"alertDeliveries">;
