@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useAction, useMutation, useQuery } from "convex/react";
 import { ConvexError } from "convex/values";
 import { api } from "../convex/_generated/api";
+import { friendlyError } from "@/lib/userErrors";
 import type { Id } from "../convex/_generated/dataModel";
 import {
   AlertCircle,
@@ -167,7 +168,7 @@ export default function GitHubRepair({
       ) {
         setConnectError("GitHub is not configured on this deployment yet (manual setup required).");
       } else {
-        setConnectError(err instanceof Error ? err.message : "Could not start the GitHub connection.");
+        setConnectError(friendlyError(err, "Could not start the GitHub connection."));
       }
       setBusy(null);
     }
@@ -188,7 +189,7 @@ export default function GitHubRepair({
       else if (res.kind === "quota_limited") setActionError(quotaText(res.retryAfterMs, res.limit));
       else setActionError(res.message);
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : "Could not list repositories.");
+      setActionError(friendlyError(err, "Could not list repositories."));
     } finally {
       setBusy(null);
     }
@@ -215,7 +216,7 @@ export default function GitHubRepair({
         setActionError(res.message);
       }
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : "Could not list branches.");
+      setActionError(friendlyError(err, "Could not list branches."));
     } finally {
       setBusy(null);
     }
@@ -253,7 +254,7 @@ export default function GitHubRepair({
         ...prev,
         [proposal.key]: {
           kind: "failed",
-          message: err instanceof Error ? err.message : "Analysis failed.",
+          message: friendlyError(err, "Analysis failed."),
         },
       }));
     } finally {
@@ -267,7 +268,7 @@ export default function GitHubRepair({
     try {
       await approveAndRequestPr({ proposalId, confirmRepoFullName });
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : "Approval failed.");
+      setActionError(friendlyError(err, "Approval failed."));
     } finally {
       setBusy(null);
     }
@@ -288,7 +289,7 @@ export default function GitHubRepair({
     } catch (err) {
       setPrResults((prev) => ({
         ...prev,
-        [proposalId]: err instanceof Error ? err.message : "Pull-request request failed.",
+        [proposalId]: friendlyError(err, "Pull-request request failed."),
       }));
     } finally {
       setBusy(null);

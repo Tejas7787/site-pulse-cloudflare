@@ -1,6 +1,7 @@
 import { useParams, Link } from "react-router";
 import { useQuery } from "convex/react";
 import { api } from "../convex/_generated/api";
+import { friendlyError } from "@/lib/userErrors";
 import { getVisitorId, trackEvent } from "../lib/analytics";
 import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -295,7 +296,7 @@ export default function Report() {
       setPdfState("idle");
     } catch (err) {
       trackEvent("pdf_export_failed", { path: window.location.pathname });
-      setPdfError(err instanceof Error ? err.message : "Unknown error while generating the PDF.");
+      setPdfError(friendlyError(err, "Unknown error while generating the PDF."));
       setPdfState("error");
     }
   };

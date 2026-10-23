@@ -1,4 +1,5 @@
 import { Button } from "@/components/ui/button";
+import { friendlyAuthError } from "@/lib/authErrors";
 import {
   Card,
   CardContent,
@@ -58,11 +59,7 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
       setIsLoading(false);
     } catch (error) {
       console.error("Email sign-in error:", error);
-      setError(
-        error instanceof Error
-          ? error.message
-          : "Failed to send verification code. Please try again.",
-      );
+      setError(friendlyAuthError(error, "We couldn't send your sign-in code right now. Please try again in a moment."));
       setIsLoading(false);
     }
   };
@@ -95,7 +92,7 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
     } catch (error) {
       console.error("Guest login error:", error);
       console.error("Error details:", JSON.stringify(error, null, 2));
-      setError(`Failed to sign in as guest: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      setError(friendlyAuthError(error, "Guest sign-in failed. Please try again."));
       setIsLoading(false);
     }
   };

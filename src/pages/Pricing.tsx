@@ -14,6 +14,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { api } from "../convex/_generated/api";
+import { friendlyError } from "@/lib/userErrors";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -105,7 +106,7 @@ export default function Pricing() {
     try {
       await fn();
     } catch (err) {
-      setError(err instanceof Error ? err.message : fallback);
+      setError(friendlyError(err, fallback));
     } finally {
       setBusy(false);
     }

@@ -1,0 +1,22 @@
+{
+  "cookies": [],
+  "origins": [
+    {
+      "origin": "http://localhost:5173",
+      "localStorage": [
+        {
+          "name": "__convexAuthJWT_httpsadorablehyena411convexcloud",
+          "value": "eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJqeDdmNDRjZDU2amRodjdyNTRzY2tuMHRxbjhndGF2Y3xqaDc4YXh4cWozdjdtZHkzbWpteHJzM2o5NThndGQ5NSIsImlhdCI6MTc5Mjc1NDU5OSwiaXNzIjoiaHR0cHM6Ly9hZG9yYWJsZS1oeWVuYS00MTEuY29udmV4LnNpdGUiLCJhdWQiOiJjb252ZXgiLCJleHAiOjE3OTI3NTgxOTl9.dA1S5xv39glwywQ1d-TNpAiKJ4kxUCiM4rNqfoeFhfVeGcyl-uB9IeHkwYjEaRcYxx1nWPUcOxaAFxLckExZspmFOkpZj-n7Xp-6YVsJAOhQjGmERIYXbGhXRBW00rF9eVzkM9OfQqIGzla9upC68GKSadXRZrcrRO67mdmoZx4Fbn-xxrqmN2RU71xiEIUlOKfhmf5bz8Qc0w3f3WAIVpCmFg7iVRvIaofEmp7Ii-0z6WeZg0IX-lPK6hJTpQEkQ7wvq_AMOnCaE0g24amQ8lakaZgCZKSpUvijkSJZ_kyIRHhe2ijzrqascHVKUdSx77n9yAs6Aj5V6yewjsjktg"
+        },
+        {
+          "name": "__convexAuthRefreshToken_httpsadorablehyena411convexcloud",
+          "value": "jd7b1nzyfb6d5y5v5vmdts1qxx8gt32e|jh78axxqj3v7mdy3mjmxrs3j958gtd95"
+        },
+        {
+          "name": "sp_vid",
+          "value": "63fb2a08-1f62-414d-8035-d5b00a214434"
+        }
+      ]
+    }
+  ]
+}

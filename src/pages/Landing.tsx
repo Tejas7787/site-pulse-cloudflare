@@ -5,6 +5,7 @@ import { api } from "../convex/_generated/api";
 import { trackEvent, getVisitorId } from "../lib/analytics";
 import FeedbackModal from "../components/FeedbackModal";
 import { addScanToHistory, getScanHistory, type ScanHistoryEntry } from "../lib/scanHistory";
+import { friendlyError } from "@/lib/userErrors";
 import { ScoreTrend } from "../components/ScoreTrend";
 import { StatusPill } from "../components/ui/status-pill";
 import { dedupeIssues } from "../lib/recommendations";
@@ -259,7 +260,7 @@ export default function Landing() {
       }
     } catch (err) {
       trackEvent("scan_failed");
-      setError(err instanceof Error ? err.message : "Scan failed. Please check the URL and try again.");
+      setError(friendlyError(err, "Scan failed. Please check the URL and try again."));
     } finally { setScanning(false); }
   };
 
@@ -533,6 +534,53 @@ export default function Landing() {
           </motion.section>
         )}
       </AnimatePresence>
+
+      {/* ── Scan history (Phase 9C): the header's "History" button scrolls to
+          this section. Entries live in localStorage (this browser only), so
+          the list is rendered from the same `history` state the button counts.
+          Without this target the button scrolled to a non-existent id. */}
+      {history.length > 0 && (
+        <section id="scan-history" className="border-t-2 border-[#1a1a1a] bg-white">
+          <div className="mx-auto max-w-6xl px-4 py-10 sm:px-6">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h3 className="text-lg font-black">Scan history</h3>
+              <span className="border-2 border-[#1a1a1a] bg-[#FFFBF0] px-3 py-1 text-xs font-bold">
+                {history.length} scan{history.length !== 1 ? "s" : ""} in this browser
+              </span>
+            </div>
+            <p className="mt-1 text-xs text-[#1a1a1a]/50">
+              Stored locally in this browser — no account needed. Open a report to view it again.
+            </p>
+            <div className="mt-4 space-y-2">
+              {history.map((entry) => (
+                <Link
+                  key={entry.scanId}
+                  to={`/report/${entry.scanId}`}
+                  className="flex items-center gap-3 border-2 border-[#1a1a1a] bg-[#FFFBF0] px-4 py-3 transition-colors hover:bg-[#E0E7FF]"
+                >
+                  <span
+                    className={`flex size-9 shrink-0 items-center justify-center border-2 border-[#1a1a1a] text-sm font-black ${
+                      entry.overallScored
+                        ? gradeColors[entry.grade] || "bg-gray-300"
+                        : "bg-gray-200"
+                    }`}
+                  >
+                    {entry.overallScored ? entry.score : "—"}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm font-bold">{entry.url}</span>
+                    <span className="block text-xs text-[#1a1a1a]/50">
+                      {entry.overallScored ? `Grade ${entry.grade}` : "Insufficient data"} ·{" "}
+                      {new Date(entry.scannedAt).toLocaleString()}
+                    </span>
+                  </span>
+                  <ArrowRight className="size-4 shrink-0 text-[#1a1a1a]/40" aria-hidden="true" />
+                </Link>
+              ))}
+            </div>
+          </div>
+        </section>
+      )}
 
       <footer className="border-t-2 border-[#1a1a1a] bg-[#1a1a1a] text-white">
         <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-4 px-4 py-6 sm:flex-row sm:px-6">

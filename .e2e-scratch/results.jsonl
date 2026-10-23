@@ -1,0 +1,99 @@
+{"id":"auth-dashboard-redirects-to-auth","status":"PASS","detail":"http://localhost:5173/auth?returnTo=%2Fdashboard"}
+{"id":"auth-pricing-redirects-to-auth","status":"PASS","detail":"http://localhost:5173/auth?returnTo=%2Fpricing"}
+{"id":"auth-email-otp-code-step","status":"FAIL","detail":"TimeoutError: locator.waitFor: Timeout 15000ms exceeded.\nCall log:\n  - waiting for getByText('Check your email') to be visible\n"}
+{"id":"auth-guest-login","status":"PASS","detail":"http://localhost:5173/dashboard"}
+{"id":"auth-session-persists-across-reload","status":"PASS","detail":""}
+{"id":"scan-completes-and-opens-report","status":"PASS","detail":"http://localhost:5173/report/k17975g9kfxttytgrrzytwg2vh8gvhg2"}
+{"id":"report-renders-core-sections","status":"PASS","detail":""}
+{"id":"doctor-diagnosis-runs","status":"PASS","detail":""}
+{"id":"repair-agent-proposals-and-github-ui","status":"FAIL","detail":"TimeoutError: locator.waitFor: Timeout 30000ms exceeded.\nCall log:\n  - waiting for getByText('Connect GitHub').first() to be visible\n"}
+{"id":"ssrf-private-address-refused","status":"PASS","detail":"blocked before fetch"}
+{"id":"scan-dns-failure-shows-honest-error","status":"PASS","detail":""}
+{"id":"scan-history-shows-prior-scan","status":"FAIL","detail":"TimeoutError: locator.waitFor: Timeout 10000ms exceeded.\nCall log:\n  - waiting for locator('#scan-history') to be visible\n"}
+{"id":"logout-ends-session-and-protects-routes","status":"PASS","detail":"signed out → /, /dashboard → /auth"}
+{"id":"part1-console-errors","status":"INFO","detail":"6 captured: console: Blocked attempt to show a 'beforeunload' confirmation panel for a frame that never had a user gesture since its load. https://www.chromestatus.com/feature/5082396709879808 | console: Blocked attempt to show a 'beforeunload' confirmation panel for a frame that never had a user gesture since its load. https://www.chromestatus.com/feature/5082396709879808 | console: [CONVEX A(auth:signIn)] [Request ID: 8824ac00d224be5a] Server Error\nUncaught Error: Could not send the sign-in code (HTTP 400): Invalid `to` field. Please use our testing email address instead of doma | console: Email sign-in error: Error: [CONVEX A(auth:signIn)] [Request ID: 8824ac00d224be5a] Server Error\nUncaught Error: Could not send the sign-in code (HTTP 400): Invalid `to` field. Please use our testing e | console: [CONVEX A(scan:scanWebsite)] [Request ID: 79f5dc39cb9cb6cf] Server Error\nUncaught Error: This URL points to a private or restricted address and cannot be scanned.\n    at handler (../src/convex/scan.ts"}
+{"id":"auth-dashboard-redirects-to-auth","status":"PASS","detail":"http://localhost:5173/auth?returnTo=%2Fdashboard"}
+{"id":"auth-pricing-redirects-to-auth","status":"PASS","detail":"http://localhost:5173/auth?returnTo=%2Fpricing"}
+{"id":"auth-email-otp-code-step","status":"PASS","detail":"friendly error shown, no raw stack (OTP gateway limits recipients to its testing address)"}
+{"id":"auth-guest-login","status":"PASS","detail":"http://localhost:5173/dashboard"}
+{"id":"auth-session-persists-across-reload","status":"PASS","detail":""}
+{"id":"scan-completes-and-opens-report","status":"PASS","detail":"http://localhost:5173/report/k17fsrhmqzfkf66ns80n8d23b18gv1nv"}
+{"id":"report-renders-core-sections","status":"PASS","detail":""}
+{"id":"doctor-diagnosis-runs","status":"PASS","detail":""}
+{"id":"repair-agent-proposals-and-github-ui","status":"FAIL","detail":"Error: no honest GitHub not-configured state"}
+{"id":"ssrf-private-address-refused","status":"PASS","detail":"blocked before fetch"}
+{"id":"scan-dns-failure-shows-honest-error","status":"PASS","detail":""}
+{"id":"scan-history-shows-prior-scan","status":"PASS","detail":""}
+{"id":"logout-ends-session-and-protects-routes","status":"PASS","detail":"signed out → /, /dashboard → /auth"}
+{"id":"part1-console-errors","status":"INFO","detail":"6 captured: console: Blocked attempt to show a 'beforeunload' confirmation panel for a frame that never had a user gesture since its load. https://www.chromestatus.com/feature/5082396709879808 | console: Blocked attempt to show a 'beforeunload' confirmation panel for a frame that never had a user gesture since its load. https://www.chromestatus.com/feature/5082396709879808 | console: [CONVEX A(auth:signIn)] [Request ID: 2f272d41d7763469] Server Error\nUncaught Error: Could not send the sign-in code (HTTP 400): Invalid `to` field. Please use our testing email address instead of doma | console: Email sign-in error: Error: [CONVEX A(auth:signIn)] [Request ID: 2f272d41d7763469] Server Error\nUncaught Error: Could not send the sign-in code (HTTP 400): Invalid `to` field. Please use our testing e | console: [CONVEX A(scan:scanWebsite)] [Request ID: 040b1a84c104350a] Server Error\nUncaught Error: This URL points to a private or restricted address and cannot be scanned.\n    at handler (../src/convex/scan.ts"}
+{"id":"auth-dashboard-redirects-to-auth","status":"PASS","detail":"http://localhost:5173/auth?returnTo=%2Fdashboard"}
+{"id":"auth-pricing-redirects-to-auth","status":"PASS","detail":"http://localhost:5173/auth?returnTo=%2Fpricing"}
+{"id":"auth-email-otp-code-step","status":"PASS","detail":"friendly error shown, no raw stack (OTP gateway limits recipients to its testing address)"}
+{"id":"auth-guest-login","status":"PASS","detail":"http://localhost:5173/dashboard"}
+{"id":"auth-session-persists-across-reload","status":"PASS","detail":""}
+{"id":"scan-completes-and-opens-report","status":"PASS","detail":"http://localhost:5173/report/k174gbrtse6hcer8wk85mmeg0n8gvekx"}
+{"id":"report-renders-core-sections","status":"PASS","detail":""}
+{"id":"doctor-diagnosis-runs","status":"PASS","detail":""}
+{"id":"repair-agent-proposals-and-github-ui","status":"PASS","detail":"proposals ok; GitHub unconfigured honest state; writes-disabled notice ok"}
+{"id":"ssrf-private-address-refused","status":"PASS","detail":"blocked before fetch"}
+{"id":"scan-dns-failure-shows-honest-error","status":"PASS","detail":""}
+{"id":"scan-history-shows-prior-scan","status":"PASS","detail":""}
+{"id":"logout-ends-session-and-protects-routes","status":"PASS","detail":"signed out → /, /dashboard → /auth"}
+{"id":"part1-console-errors","status":"INFO","detail":"6 captured: console: Blocked attempt to show a 'beforeunload' confirmation panel for a frame that never had a user gesture since its load. https://www.chromestatus.com/feature/5082396709879808 | console: Blocked attempt to show a 'beforeunload' confirmation panel for a frame that never had a user gesture since its load. https://www.chromestatus.com/feature/5082396709879808 | console: [CONVEX A(auth:signIn)] [Request ID: eceb9970a784e601] Server Error\nUncaught Error: Could not send the sign-in code (HTTP 400): Invalid `to` field. Please use our testing email address instead of doma | console: Email sign-in error: Error: [CONVEX A(auth:signIn)] [Request ID: eceb9970a784e601] Server Error\nUncaught Error: Could not send the sign-in code (HTTP 400): Invalid `to` field. Please use our testing e | console: [CONVEX A(scan:scanWebsite)] [Request ID: d0e85e5da3409d7a] Server Error\nUncaught Error: This URL points to a private or restricted address and cannot be scanned.\n    at handler (../src/convex/scan.ts"}
+{"id":"monitor-create-with-alert-email","status":"PASS","detail":""}
+{"id":"monitor-insights-panel-honest-no-data","status":"PASS","detail":"no fabricated metrics"}
+{"id":"monitor-alert-destination-recipient","status":"PASS","detail":""}
+{"id":"monitor-invalid-credentials-url-rejected","status":"PASS","detail":""}
+{"id":"monitor-pause-resume","status":"PASS","detail":""}
+{"id":"monitor-list-limited-to-free-cap-display","status":"PASS","detail":"cap copy = 10"}
+{"id":"part2-console-errors","status":"INFO","detail":"1 captured: console: [CONVEX M(monitors:createMonitor)] [Request ID: a13bb0923a152e9d] Server Error\nUncaught Error: Enter a valid website address (http or https, no credentials).\n    at handler (../src/convex/monitors.ts:"}
+{"id":"agency-create-workspace","status":"PASS","detail":""}
+{"id":"agency-client-cap-enforced-with-readable-error","status":"PASS","detail":"(3/3 active — upgrade on /pricing for more)"}
+{"id":"agency-invite-creates-shareable-link","status":"PASS","detail":"http://localhost:5173/agency?invite=<token>…"}
+{"id":"cross-user-agency-isolation","status":"PASS","detail":"B sees only the create-workspace state"}
+{"id":"invite-acceptance-requires-invited-account","status":"PASS","detail":"wrong-account refusal shown"}
+{"id":"auth-dashboard-redirects-to-auth","status":"PASS","detail":"http://localhost:5173/auth?returnTo=%2Fdashboard"}
+{"id":"auth-pricing-redirects-to-auth","status":"PASS","detail":"http://localhost:5173/auth?returnTo=%2Fpricing"}
+{"id":"auth-email-otp-code-step","status":"PASS","detail":"friendly error shown, no raw stack (OTP gateway limits recipients to its testing address)"}
+{"id":"auth-guest-login","status":"PASS","detail":"http://localhost:5173/dashboard"}
+{"id":"auth-session-persists-across-reload","status":"PASS","detail":""}
+{"id":"scan-completes-and-opens-report","status":"PASS","detail":"http://localhost:5173/report/k17552mq2j8rgz9tfmf3s2j8zn8gtgc4"}
+{"id":"report-renders-core-sections","status":"PASS","detail":""}
+{"id":"doctor-diagnosis-runs","status":"PASS","detail":""}
+{"id":"repair-agent-proposals-and-github-ui","status":"PASS","detail":"proposals ok; GitHub unconfigured honest state; writes-disabled notice ok"}
+{"id":"ssrf-private-address-refused","status":"PASS","detail":"blocked before fetch; friendly error only"}
+{"id":"scan-dns-failure-shows-honest-error","status":"PASS","detail":""}
+{"id":"scan-history-shows-prior-scan","status":"PASS","detail":""}
+{"id":"logout-ends-session-and-protects-routes","status":"PASS","detail":"signed out → /, /dashboard → /auth"}
+{"id":"part1-console-errors","status":"INFO","detail":"6 captured: console: Blocked attempt to show a 'beforeunload' confirmation panel for a frame that never had a user gesture since its load. https://www.chromestatus.com/feature/5082396709879808 | console: Blocked attempt to show a 'beforeunload' confirmation panel for a frame that never had a user gesture since its load. https://www.chromestatus.com/feature/5082396709879808 | console: [CONVEX A(auth:signIn)] [Request ID: def5e58a26fbe212] Server Error\nUncaught Error: Could not send the sign-in code (HTTP 400): Invalid `to` field. Please use our testing email address instead of doma | console: Email sign-in error: Error: [CONVEX A(auth:signIn)] [Request ID: def5e58a26fbe212] Server Error\nUncaught Error: Could not send the sign-in code (HTTP 400): Invalid `to` field. Please use our testing e | console: [CONVEX A(scan:scanWebsite)] [Request ID: d7364bd3cf3b0c86] Server Error\nUncaught Error: This URL points to a private or restricted address and cannot be scanned.\n    at handler (../src/convex/scan.ts"}
+{"id":"monitor-create-with-alert-email","status":"PASS","detail":""}
+{"id":"monitor-insights-panel-honest-no-data","status":"PASS","detail":"no fabricated metrics"}
+{"id":"monitor-alert-destination-recipient","status":"PASS","detail":""}
+{"id":"monitor-invalid-credentials-url-rejected","status":"PASS","detail":""}
+{"id":"monitor-pause-resume","status":"PASS","detail":""}
+{"id":"monitor-list-limited-to-free-cap-display","status":"PASS","detail":"cap copy = 10"}
+{"id":"part2-console-errors","status":"INFO","detail":"1 captured: console: [CONVEX M(monitors:createMonitor)] [Request ID: ad5b9088f809a3f8] Server Error\nUncaught Error: Enter a valid website address (http or https, no credentials).\n    at handler (../src/convex/monitors.ts:"}
+{"id":"agency-create-workspace","status":"PASS","detail":""}
+{"id":"agency-client-cap-enforced-with-readable-error","status":"PASS","detail":"cap enforced; friendly message; no internals"}
+{"id":"agency-invite-creates-shareable-link","status":"PASS","detail":"http://localhost:5173/agency?invite=<token>…"}
+{"id":"cross-user-agency-isolation","status":"PASS","detail":"B sees only the create-workspace state"}
+{"id":"invite-acceptance-requires-invited-account","status":"PASS","detail":"wrong-account refusal shown"}
+{"id":"pricing-page-renders-plans-and-test-badge","status":"FAIL","detail":"Error: expected default INR prices: ← Dashboard\nPlans & billing\n\nPick the plan that fits how many sites you watch. Limits are enforced server-side.\n\nTEST MODE — NO REAL CHARGES\n₹ INR\n$ USD\nFree\nCURRENT\n\nEverything you need to watch a handful of sites.\n\n$0/month\n\nUptime monitors\n10\nSaved scans / mont"}
+{"id":"pricing-currency-toggle-usd","status":"PASS","detail":""}
+{"id":"pricing-free-is-current-no-subscription-card","status":"PASS","detail":""}
+{"id":"pricing-upgrade-respects-billing-configuration","status":"PASS","detail":"honest refusal (no provider configured; simulated default-off)"}
+{"id":"pricing-repair-agent-feature-gated-in-copy","status":"PASS","detail":""}
+{"id":"part4-console-errors","status":"INFO","detail":"0 captured"}
+{"id":"pricing-page-renders-plans-and-test-badge","status":"PASS","detail":"INR catalog ₹299/₹799 after toggle"}
+{"id":"pricing-currency-toggle-usd","status":"PASS","detail":""}
+{"id":"pricing-free-is-current-no-subscription-card","status":"PASS","detail":""}
+{"id":"pricing-upgrade-respects-billing-configuration","status":"PASS","detail":"honest refusal (no provider configured; simulated default-off)"}
+{"id":"pricing-repair-agent-feature-gated-in-copy","status":"PASS","detail":""}
+{"id":"part4-console-errors","status":"INFO","detail":"0 captured"}
+{"id":"desktop-nav-walkthrough","status":"PASS","detail":"dashboard ⇄ monitors ⇄ pricing ⇄ agency"}
+{"id":"latepoll-monitor-created","status":"PASS","detail":"monitor created; session saved for probe poll"}
+{"id":"mobile-landing-no-overflow","status":"PASS","detail":""}
+{"id":"mobile-dashboard-no-overflow","status":"PASS","detail":""}
+{"id":"mobile-monitors-no-overflow","status":"PASS","detail":""}
+{"id":"mobile-pricing-no-overflow","status":"PASS","detail":""}
+{"id":"mobile-agency-no-overflow","status":"PASS","detail":""}

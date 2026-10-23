@@ -20,6 +20,7 @@ import type { Id } from "../convex/_generated/dataModel";
 import { useAuth } from "@/hooks/use-auth";
 import { Button } from "@/components/ui/button";
 import { MonitorInsights } from "@/components/MonitorInsights";
+import { friendlyError } from "@/lib/userErrors";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import {
@@ -103,7 +104,7 @@ export default function Monitors() {
       setAlertEmail("");
       setSelected(id);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not create the monitor.");
+      setError(friendlyError(err, "Could not create the monitor."));
     } finally {
       setCreating(false);
     }
@@ -116,7 +117,7 @@ export default function Monitors() {
       if (action === "delete" && selected === monitorId) setSelected(null);
       await updateMonitor({ monitorId, action });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Action failed.");
+      setError(friendlyError(err, "Action failed."));
     }
   };
 

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useAction } from "convex/react";
 import { api } from "../convex/_generated/api";
 import type { Id } from "../convex/_generated/dataModel";
+import { friendlyError } from "@/lib/userErrors";
 import { motion, AnimatePresence } from "framer-motion";
 import { Stethoscope, Loader2, AlertCircle, ChevronDown, Clock } from "lucide-react";
 import { DIAGNOSIS_LIMIT_PER_HOUR, type DoctorDiagnosis } from "../lib/aiDoctor";
@@ -71,7 +72,7 @@ export default function WebsiteDoctor({
       }
     } catch (err) {
       setError(
-        err instanceof Error ? err.message : "The Website Doctor is temporarily unavailable.",
+        friendlyError(err, "The Website Doctor is temporarily unavailable."),
       );
     } finally {
       setLoading(false);

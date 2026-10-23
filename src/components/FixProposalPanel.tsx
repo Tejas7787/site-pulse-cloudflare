@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useAction } from "convex/react";
 import { api } from "../convex/_generated/api";
 import type { Id } from "../convex/_generated/dataModel";
+import { friendlyError } from "@/lib/userErrors";
 import { motion, AnimatePresence } from "framer-motion";
 import { FileDiff, Loader2, AlertCircle, ChevronDown, Clock, Info } from "lucide-react";
 import {
@@ -93,7 +94,7 @@ export default function FixProposalPanel({
       }
     } catch (err) {
       setError(
-        err instanceof Error ? err.message : "Fix proposals are temporarily unavailable.",
+        friendlyError(err, "Fix proposals are temporarily unavailable."),
       );
     } finally {
       setLoading(false);

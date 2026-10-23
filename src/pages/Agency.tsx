@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import { api } from "../convex/_generated/api";
 import type { Id } from "../convex/_generated/dataModel";
+import { friendlyError } from "@/lib/userErrors";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -61,7 +62,7 @@ function timeAgo(ms: number | null | undefined): string {
 }
 
 function errorMessage(err: unknown, fallback: string): string {
-  return err instanceof Error ? err.message : fallback;
+  return friendlyError(err, fallback);
 }
 
 export default function Agency() {
