@@ -231,8 +231,11 @@ describe("getUptimeInsights", () => {
     expect(week.checks).toBe(31);
     expect(week.uptime).not.toBeNull();
     expect(week.uptime!).toBeLessThan(100); // the down check counts against it
+    // `partial` (window mostly uncovered) but not `insufficient` (few checks):
+    // the labels are distinct and the UI must not conflate them.
     expect(week.partial).toBe(true);
-    expect(week.insufficient).toBe(true);
+    expect(week.insufficient).toBe(false);
+    expect(week.coverage).toBeLessThan(0.9);
 
     expect(month.checks).toBe(31);
     expect(month.uptime).not.toBeNull();

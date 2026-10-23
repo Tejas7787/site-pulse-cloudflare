@@ -19,6 +19,7 @@ import { api } from "../convex/_generated/api";
 import type { Id } from "../convex/_generated/dataModel";
 import { useAuth } from "@/hooks/use-auth";
 import { Button } from "@/components/ui/button";
+import { MonitorInsights } from "@/components/MonitorInsights";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import {
@@ -395,34 +396,10 @@ export default function Monitors() {
                           </div>
                         )}
 
-                        {detail.incidents.length > 0 && (
-                          <div>
-                            <div className="mb-1.5 text-xs font-medium text-muted-foreground">
-                              Incidents
-                            </div>
-                            <ul className="space-y-1 text-xs">
-                              {detail.incidents.map((incident) => (
-                                <li
-                                  key={incident._id}
-                                  className="flex flex-wrap items-center gap-2 rounded border border-border/70 px-2 py-1.5"
-                                >
-                                  <span
-                                    className={`font-bold uppercase ${incident.open ? "text-red-600" : "text-emerald-600"}`}
-                                  >
-                                    {incident.open ? "open" : "resolved"}
-                                  </span>
-                                  <span>{incident.reason}</span>
-                                  <span className="text-muted-foreground">
-                                    {new Date(incident.openedAt).toLocaleString()}
-                                    {incident.recoveredAt
-                                      ? ` → ${new Date(incident.recoveredAt).toLocaleString()}`
-                                      : ""}
-                                  </span>
-                                </li>
-                              ))}
-                            </ul>
-                          </div>
-                        )}
+                        {/* Phase 8: uptime windows, response-time trend and
+                            the incident timeline — server-computed, ownership
+                            enforced inside the queries. */}
+                        <MonitorInsights monitorId={monitor._id} />
                       </div>
                     )}
                   </CardContent>
