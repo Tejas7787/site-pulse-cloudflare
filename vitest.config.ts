@@ -21,6 +21,7 @@ export default defineProject({
       "tests/monitoringInsights.test.ts",
       "tests/fixProposalAction.test.ts",
       "tests/launchHardening.test.ts",
+      "tests/integrationReadiness.test.ts",
     ],
   },
 });

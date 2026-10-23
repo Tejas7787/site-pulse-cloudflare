@@ -64,6 +64,7 @@ export default function Pricing() {
   const cancelSubscription = useMutation(api.billing.cancelSubscription);
   const resumeSubscription = useMutation(api.billing.resumeSubscription);
   const startStripeCheckout = useAction(api.billingActions.startStripeCheckout);
+  const startRazorpayCheckout = useAction(api.billingActions.startRazorpayCheckout);
 
   const [currency, setCurrency] = useState<Currency>(defaultCurrency);
   const [pending, setPending] = useState<{
@@ -128,8 +129,70 @@ export default function Pricing() {
     }
   };
 
+  // Razorpay's hosted widget (checkout.js) — the payment UI itself is
+  // Razorpay-hosted; the server already created the subscription and only
+  // hands back the PUBLIC key id + subscription id.
+  const payWithRazorpay = async (plan: PlanId) => {
+    if (plan !== "pro" && plan !== "agency") return;
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await startRazorpayCheckout({ plan, currency });
+      if (!result.ok) {
+        setError(`Razorpay checkout is unavailable (${result.reason}) — no charge was made.`);
+        return;
+      }
+      const loaded = await new Promise<boolean>((resolve) => {
+        const existing = document.querySelector('script[src="https://checkout.razorpay.com/v1/checkout.js"]');
+        if (existing || (window as unknown as { Razorpay?: unknown }).Razorpay) {
+          resolve(true);
+          return;
+        }
+        const script = document.createElement("script");
+        script.src = "https://checkout.razorpay.com/v1/checkout.js";
+        script.onload = () => resolve(true);
+        script.onerror = () => resolve(false);
+        document.body.appendChild(script);
+      });
+      if (!loaded || !(window as unknown as { Razorpay?: new (o: Record<string, unknown>) => { open: () => void } }).Razorpay) {
+        setError("Razorpay's checkout widget could not be loaded — no charge was made. Try again shortly.");
+        return;
+      }
+      const RazorpayCtor = (window as unknown as { Razorpay: new (o: Record<string, unknown>) => { open: () => void } }).Razorpay;
+      const widget = new RazorpayCtor({
+        key: result.keyId,
+        subscription_id: result.subscriptionId,
+        name: "SitePulse",
+        description: `${plan === "pro" ? "Pro" : "Agency"} plan (${result.currency})`,
+        theme: { color: "#1a1a1a" },
+        handler: () => {
+          setNotice(
+            "Payment submitted — your plan activates once Razorpay's signed webhook confirms it (usually a few seconds).",
+          );
+        },
+      });
+      widget.open();
+    } catch {
+      setError("Razorpay checkout could not be started — no charge was made.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const beginCheckout = async (plan: PlanId) => {
     if (plan !== "pro" && plan !== "agency") return; // free needs no checkout
+    // Phase 9B: route by what this deployment is actually configured for.
+    // The simulated flow only exists when the operator explicitly enabled it
+    // (SITEPULSE_SIMULATED_BILLING=true); otherwise prefer a real test-mode
+    // provider, and refuse honestly when none exists.
+    if (!mode.simulated) {
+      if (mode.stripe) return payWithStripe(plan);
+      if (mode.razorpay) return payWithRazorpay(plan);
+      setError(
+        "Billing is not configured on this deployment — no test-mode payment provider is available yet.",
+      );
+      return;
+    }
     await run(async () => {
       const result = await startCheckout({ plan, currency });
       setPending({
@@ -411,6 +474,15 @@ export default function Pricing() {
                     Use Stripe hosted checkout (test mode)
                   </Button>
                 )}
+                {mode.razorpay && (
+                  <Button
+                    variant="secondary"
+                    disabled={busy}
+                    onClick={() => void payWithRazorpay(pending.plan)}
+                  >
+                    Use Razorpay hosted checkout (test mode)
+                  </Button>
+                )}
                 <Button variant="ghost" onClick={() => setPending(null)} disabled={busy}>
                   Abort
                 </Button>
@@ -430,8 +502,12 @@ export default function Pricing() {
         <p className="text-xs text-muted-foreground">
           Prices are introductory and billed monthly in {currency}. Plan limits are enforced by the
           server on every action — upgrading never changes health scores or report grades.
-          {!mode.stripe && !mode.razorpay && " Real provider checkout is not configured yet; simulated payments are in use."}
+          {mode.simulated && !mode.stripe && !mode.razorpay &&
+            " Real provider checkout is not configured yet; simulated payments are in use."}
+          {!mode.simulated && !mode.stripe && !mode.razorpay &&
+            " No payment provider is configured on this deployment yet (test-mode Stripe or Razorpay keys required)."}
           {mode.stripe && " Stripe test-mode checkout is configured."}
+          {mode.razorpay && " Razorpay test-mode checkout is configured."}
         </p>
       </div>
     </main>

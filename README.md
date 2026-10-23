@@ -29,6 +29,95 @@ The convex server has a separate set of environment variables that are accessibl
 
 Currently, these variables include auth-specific keys: JWKS, JWT_PRIVATE_KEY, and SITE_URL.
 
+## Integration setup (test mode only)
+
+Every external integration is OPTIONAL and fail-closed: with no configuration,
+the product works without that integration and nothing is invented. Set Convex
+env vars with `npx convex env set <NAME> <value>` (or the deployment's Keys
+UI). Never put live payment keys anywhere in this project — the code refuses
+to run with `sk_live_` / `rzp_live_` keys.
+
+You can check what a deployment has configured at any time by querying
+`integrations.getIntegrationStatus` (public query; returns booleans only —
+never key or secret values).
+
+### Simulated payments (DEFAULT: DISABLED)
+
+The simulated "payment succeeded" provider can mint paid plans by design, so
+it only runs when an operator explicitly enables it — local/test environments
+only, never production:
+
+```
+npx convex env set SITEPULSE_SIMULATED_BILLING true
+```
+
+With the variable unset (the default), `startCheckout` and
+`completeSimulatedCheckout` are refused server-side with
+`simulated_billing_disabled`, and the pricing page hides the simulated flow.
+
+### Stripe (TEST MODE)
+
+1. In the Stripe dashboard (test mode): Developers → API keys → copy the
+   **Secret key** (`sk_test_…`) and set it:
+   `npx convex env set STRIPE_SECRET_KEY sk_test_…`
+2. Install the Stripe CLI and forward webhooks to this deployment:
+   `stripe listen --forward-to https://<deployment>.convex.site/billing/webhooks/stripe`
+   Copy the printed signing secret (`whsec_…`) and set it:
+   `npx convex env set STRIPE_WEBHOOK_SECRET whsec_…`
+3. In the Stripe dashboard → Developers → Webhooks, add an endpoint for
+   `https://<deployment>.convex.site/billing/webhooks/stripe` subscribed to:
+   `checkout.session.completed`, `invoice.paid`, `invoice.payment_failed`,
+   `customer.subscription.updated`, `customer.subscription.deleted`.
+4. Checkout activation happens ONLY through that signed webhook; a missing or
+   wrong signature is rejected (401) and changes nothing.
+
+### Razorpay (TEST MODE)
+
+1. Razorpay dashboard → Settings → API keys → generate a **test** key
+   (`rzp_test_…` + secret), then:
+   `npx convex env set RAZORPAY_KEY_ID rzp_test_…`
+   `npx convex env set RAZORPAY_KEY_SECRET …`
+2. Settings → Webhooks → add
+   `https://<deployment>.convex.site/billing/webhooks/razorpay` with a signing
+   secret, then:
+   `npx convex env set RAZORPAY_WEBHOOK_SECRET …`
+   Subscribe to: `subscription.charged`, `payment.captured`, `payment.failed`,
+   `subscription.halted`, `subscription.activated`, `subscription.resumed`,
+   `subscription.cancelled`, `subscription.completed`.
+3. The pricing page then uses Razorpay's hosted checkout widget
+   (`subscription_id` flow): the subscription is created server-side with
+   catalog prices, the browser opens Razorpay-hosted checkout, and the FIRST
+   signed `subscription.charged` webhook activates the plan (amount and
+   currency are re-checked against the stored checkout server-side).
+
+### Email alerts (downtime & recovery, via Resend)
+
+1. Create an API key at resend.com and set it:
+   `npx convex env set RESEND_API_KEY re_…`
+2. Optional custom sender (requires a verified domain in Resend):
+   `npx convex env set RESEND_FROM "SitePulse <alerts@yourdomain.com>"`
+   Default sender is `SitePulse <onboarding@resend.dev>`.
+3. Test end to end: create a monitor for a URL that returns an error (or pause
+   the target) — after two consecutive failed checks you receive the DOWNTIME
+   email; once two consecutive checks succeed again you receive the RECOVERY
+   email. If a send fails it is retried every 5 minutes by the alert-outbox
+   cron for up to 24 hours; without RESEND_API_KEY nothing is sent and recent
+   alerts stay queued (nothing errors in the product).
+
+### GitHub Repair Agent (OAuth; WRITES OFF by default)
+
+1. GitHub → Settings → Developer settings → OAuth Apps → New OAuth App,
+   callback URL `https://<deployment>.convex.site/github/callback`.
+2. `npx convex env set GITHUB_CLIENT_ID …`
+   `npx convex env set GITHUB_CLIENT_SECRET …`
+3. `CONVEX_SITE_URL` must be the deployment's site URL (it is used for the
+   OAuth redirect).
+4. The connection is READ-ONLY (`public_repo` scope). Pull-request creation
+   stays DISABLED unless an operator explicitly sets
+   `GITHUB_WRITE_ENABLED=true` — keep it off in production; the OAuth state is
+   single-use with a 10-minute TTL and the callback never returns token
+   material to the browser.
+
 
 # Using Authentication (Important!)
 

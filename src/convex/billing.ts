@@ -129,6 +129,25 @@ export function providerMode(): { stripe: boolean; razorpay: boolean } {
   };
 }
 
+/**
+ * Phase 9B: the SIMULATED provider can mint paid subscriptions by design,
+ * so it must never be reachable on a production deployment. It runs ONLY
+ * when the operator explicitly sets SITEPULSE_SIMULATED_BILLING=true
+ * (a local/test environment variable, set through the Keys UI). DEFAULT:
+ * DISABLED — with no configuration at all, no client-reachable function can
+ * activate paid access, and `billingMode.simulated` reports false so the
+ * pricing page hides the simulated flow.
+ */
+export function simulatedBillingEnabled(): boolean {
+  return process.env.SITEPULSE_SIMULATED_BILLING === "true";
+}
+
+const SIMULATED_BILLING_DISABLED_ERROR = {
+  code: "simulated_billing_disabled",
+  message:
+    "Simulated payments are disabled on this deployment. Use a configured test-mode provider (Stripe or Razorpay), or enable SITEPULSE_SIMULATED_BILLING=true in a local/test environment.",
+};
+
 /* ── Reads ─────────────────────────────────────────────────────────────────── */
 
 export const getMySubscription = query({
@@ -165,7 +184,10 @@ export const getMySubscription = query({
         monitors: Math.min(monitors.length, entitlements.limits.monitors),
         savedScansThisMonth: await monthlyUsage(ctx, userId, "saved-scans", now),
       },
-      billingMode: { simulated: true as const, ...mode },
+      // `simulated` now reflects the operator's kill switch, not merely the
+      // absence of a real provider: the pricing page must not offer a flow
+      // the server would refuse (Phase 9B).
+      billingMode: { simulated: simulatedBillingEnabled(), ...mode },
     };
   },
 });
@@ -196,6 +218,12 @@ export const startCheckout = mutation({
   },
   handler: async (ctx, args) => {
     const userId = await requireUser(ctx);
+    // Phase 9B: simulated checkout is opt-in per deployment (default off).
+    // Checked BEFORE any row is created, so a disabled deployment has no
+    // side effects at all.
+    if (!simulatedBillingEnabled()) {
+      throw new ConvexError(SIMULATED_BILLING_DISABLED_ERROR);
+    }
     const currency = normalizeCurrency(args.currency);
     if (currency === null) {
       throw new ConvexError({
@@ -276,6 +304,12 @@ export const completeSimulatedCheckout = mutation({
   },
   handler: async (ctx, args) => {
     const userId = await requireUser(ctx);
+    // Phase 9B: this is the ONLY path that can mint paid access in simulated
+    // mode, so it is gated by the same operator kill switch as checkout
+    // creation — default off, no side effects when disabled.
+    if (!simulatedBillingEnabled()) {
+      throw new ConvexError(SIMULATED_BILLING_DISABLED_ERROR);
+    }
     const checkout = await ctx.db.get(args.checkoutId);
     // Cross-user and forged-id protection in one check: a checkout that is
     // not yours behaves exactly like one that does not exist.
@@ -605,6 +639,48 @@ export const applyProviderWebhook = internalMutation({
       }
 
       case "renewal_paid": {
+        // Razorpay's FIRST charge (`subscription.charged`) arrives before any
+        // subscriptions row exists — it links to the pending checkout this
+        // server created at startRazorpayCheckout (providerCheckoutId ==
+        // subscription id). Without this branch the first real payment was
+        // rejected as "unknown_subscription": the user would be charged and
+        // receive nothing. Activate from the STORED checkout facts (never
+        // from event amounts alone), exactly like checkout_completed, and
+        // link the provider subscription id so every later event binds
+        // directly. Amount/currency are still checked against the catalog.
+        if (!sub && checkout) {
+          const expected = amountFor(checkout.plan, checkout.currency);
+          if (
+            args.amount !== undefined &&
+            (args.amount !== expected || args.amount !== checkout.amount)
+          ) {
+            await log("rejected", `amount ${args.amount} != ${expected}`, checkout.userId);
+            return { outcome: "rejected" as const, reason: "amount_mismatch" };
+          }
+          if (args.currency !== undefined && args.currency !== checkout.currency) {
+            await log("rejected", `currency ${args.currency} != ${checkout.currency}`, checkout.userId);
+            return { outcome: "rejected" as const, reason: "currency_mismatch" };
+          }
+          const linkedId = args.providerSubscriptionId ?? checkout.providerCheckoutId;
+          await ctx.db.insert("subscriptions", {
+            userId: checkout.userId,
+            plan: checkout.plan,
+            status: "active",
+            currency: checkout.currency,
+            provider: args.provider,
+            ...(linkedId ? { providerSubscriptionId: linkedId } : {}),
+            amountPerPeriod: checkout.amount,
+            currentPeriodStart: now,
+            currentPeriodEnd: now + BILLING_PERIOD_MS,
+            cancelAtPeriodEnd: false,
+            lastProviderEventAt: args.occurredAt,
+            startedAt: now,
+            updatedAt: now,
+          });
+          await ctx.db.patch(checkout._id, { status: "succeeded", completedAt: now });
+          await log("applied", "first_charge_activated_checkout", checkout.userId);
+          return { outcome: "applied" as const };
+        }
         if (!sub) {
           await log("rejected", "unknown_subscription");
           return { outcome: "rejected" as const, reason: "unknown_subscription" };
@@ -717,6 +793,6 @@ export const getPlanCatalog = query({
   args: {},
   handler: async () => {
     const mode = providerMode();
-    return { billingMode: { simulated: true as const, ...mode } };
+    return { billingMode: { simulated: simulatedBillingEnabled(), ...mode } };
   },
 });

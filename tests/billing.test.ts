@@ -12,6 +12,13 @@ import { describe, expect, test } from "bun:test";
 import { ConvexError } from "convex/values";
 import type { SubscriptionSnapshot } from "../src/lib/billing/plans";
 
+// Phase 9B: simulated paid-plan activation is now gated by an explicit
+// operator kill switch (SITEPULSE_SIMULATED_BILLING, DEFAULT OFF). This
+// suite exercises the simulated provider, so it opts in exactly like a
+// local/test deployment would. The default-OFF behavior itself is pinned in
+// tests/integrationReadiness.test.ts.
+process.env.SITEPULSE_SIMULATED_BILLING = "true";
+
 let signedInAs: string | null = null;
 
 const billing = await import("../src/convex/billing");

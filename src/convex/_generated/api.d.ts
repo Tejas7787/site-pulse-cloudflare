@@ -21,6 +21,7 @@ import type * as feedback from "../feedback.js";
 import type * as github from "../github.js";
 import type * as githubActions from "../githubActions.js";
 import type * as http from "../http.js";
+import type * as integrations from "../integrations.js";
 import type * as monitors from "../monitors.js";
 import type * as probe from "../probe.js";
 import type * as rateLimit from "../rateLimit.js";
@@ -49,6 +50,7 @@ declare const fullApi: ApiFromModules<{
   github: typeof github;
   githubActions: typeof githubActions;
   http: typeof http;
+  integrations: typeof integrations;
   monitors: typeof monitors;
   probe: typeof probe;
   rateLimit: typeof rateLimit;
