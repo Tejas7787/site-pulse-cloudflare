@@ -1,0 +1,15 @@
+import { chromium, devices } from "playwright";
+const BASE = "http://localhost:5173";
+const browser = await chromium.launch();
+const ctx = await browser.newContext({ ...devices["iPhone 13"], storageState: "session-state.json" });
+const page = await ctx.newPage();
+await page.goto(`${BASE}/monitors`, { waitUntil: "domcontentloaded" });
+await page.getByText("Uptime monitors").waitFor({ timeout: 15000 });
+await page.waitForTimeout(3000);
+await page.getByRole("button", { name: /Details/i }).first().click().catch(() => {});
+await page.waitForTimeout(1500);
+const body = await page.locator("body").innerText();
+console.log("=== PAGE TEXT (expanded) ===");
+console.log(body.slice(0, 4000));
+await page.screenshot({ path: "shots/poll-monitors.png", fullPage: true });
+await ctx.close(); await browser.close();
