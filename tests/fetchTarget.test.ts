@@ -100,6 +100,36 @@ describe("fetchTarget — failures", () => {
     expect(outcome.kind).toBe("too-large");
   });
 
+  test("an endless streaming body is cut off at the cap, never buffered whole", async () => {
+    // Phase 9A regression: the body used to be read with arrayBuffer() BEFORE
+    // the size check, so a hostile target streaming unbounded bytes would be
+    // fully buffered into memory first. The stream below would deliver 100 KB
+    // in 1 KB chunks; with a 5 KB cap the reader must stop within a few
+    // chunks and cancel the rest.
+    let pulled = 0;
+    const chunk = new Uint8Array(1000);
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulled += 1;
+        if (pulled > 100) {
+          controller.close();
+          return;
+        }
+        controller.enqueue(chunk);
+      },
+    });
+    const outcome = await fetchTarget("https://hostile.test/endless", {
+      fetchImpl: () => Promise.resolve(new Response(stream, { status: 200 })),
+      maxBytes: 5_000,
+    });
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) return;
+    expect(outcome.kind).toBe("too-large");
+    // Memory stayed bounded: the stream was cancelled near the 5 KB cap, not
+    // drained to its full 100 KB (which would be ~100 pulls).
+    expect(pulled).toBeLessThan(20);
+  });
+
   test("invalid URL is rejected before any request", async () => {
     let called = false;
     const outcome = await fetchTarget("not a url", {

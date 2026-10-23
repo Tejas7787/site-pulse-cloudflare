@@ -1,7 +1,9 @@
 import { useState } from "react";
 import { useMutation } from "convex/react";
+import { ConvexError } from "convex/values";
 import { X, Star, MessageSquare } from "lucide-react";
 import { api } from "../convex/_generated/api";
+import { getVisitorId } from "@/lib/analytics";
 
 const QUESTIONS = [
   {
@@ -52,11 +54,20 @@ export default function FeedbackModal({ onClose }: { onClose: () => void }) {
         problem: fields.problem || undefined,
         email: email.trim() || undefined,
         path: window.location.pathname,
+        // Per-visitor storage quota on the server (Phase 9A) — same
+        // first-party id the analytics collector uses.
+        visitorId: getVisitorId(),
       });
       setState("done");
-    } catch {
+    } catch (err) {
       setState("idle");
-      setError("Something went wrong while sending your feedback. Please try again.");
+      // Surface the server's own wording for a throttled submission instead
+      // of the generic failure text.
+      setError(
+        err instanceof ConvexError && typeof err.data?.message === "string"
+          ? err.data.message
+          : "Something went wrong while sending your feedback. Please try again.",
+      );
     }
   };
 

@@ -1,7 +1,16 @@
 import { v } from "convex/values";
-import { mutation, query } from "./_generated/server";
+import { internalMutation, mutation, query } from "./_generated/server";
 import { getAuthUserId } from "@convex-dev/auth/server";
 import type { QueryCtx } from "./_generated/server";
+import {
+  ANALYTICS_EVENT_LIMIT,
+  ANALYTICS_EVENT_WINDOW_MS,
+  consumeQuota,
+} from "./rateLimit";
+import {
+  analyticsRetentionCutoff,
+  feedbackRetentionCutoff,
+} from "./retention";
 
 /**
  * Returns the admin passcode only to users authorized via authTables.role == ADMIN.
@@ -63,6 +72,17 @@ export const track = mutation({
   },
   handler: async (ctx, args) => {
     if (!(EVENT_NAMES as readonly string[]).includes(args.name)) return null;
+    // Phase 9A: this endpoint is public and used to accept an UNBOUNDED
+    // number of inserts. A per-visitor rolling quota (same machinery as
+    // saveScan/scanWebsite) now bounds how many rows one identity can write.
+    // Telemetry must never break the page the caller is on, so a denied
+    // event is silently dropped instead of throwing.
+    const quota = await consumeQuota(ctx, {
+      key: `analytics:${truncate(args.visitorId, 64) ?? "unknown"}`,
+      limit: ANALYTICS_EVENT_LIMIT,
+      windowMs: ANALYTICS_EVENT_WINDOW_MS,
+    });
+    if (!quota.allowed) return null;
     await ctx.db.insert("analyticsEvents", {
       name: args.name,
       visitorId: truncate(args.visitorId, 64) ?? "unknown",
@@ -233,6 +253,8 @@ export const getDashboard = query({
       visitorsToday,
       visitorsWeek,
       visitorsMonth,
+      // NOTE: with retention enabled (Phase 9A) these totals cover the last
+      // ANALYTICS_RETENTION_DAYS days, not all time.
       sessionsTotal: new Set(all.map((e) => e.sessionId)).size,
       pageViewsTotal,
       scansStarted,
@@ -259,6 +281,50 @@ export const getDashboard = query({
         .sort((a, b) => b.count - a.count)
         .slice(0, 8),
       generatedAt: now,
+    };
+  },
+});
+
+// ── Phase 9A: bounded retention for the public write endpoints ────────────────
+// analyticsEvents and feedback are both written by unauthenticated callers,
+// so both need a bounded, indexed sweep — the same shape as
+// scans.deleteExpiredScans and monitors.deleteExpiredUptimeData. One bounded
+// batch per run (each table gets its own `max` slice); the hourly cron drains
+// any backlog across runs. Only rows strictly older than the cutoff are
+// deleted, and only rows of these two tables — nothing else is reachable.
+
+const DELETE_BATCH_MAX = 500;
+const DELETE_DEFAULT_BATCH = 200;
+
+export const deleteExpiredAnalytics = internalMutation({
+  args: { maxDeletes: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    const now = Date.now();
+    const limit = Math.min(
+      Math.max(Math.floor(args.maxDeletes ?? DELETE_DEFAULT_BATCH), 1),
+      DELETE_BATCH_MAX,
+    );
+
+    const expiredEvents = await ctx.db
+      .query("analyticsEvents")
+      .withIndex("by_created", (q) =>
+        q.lt("createdAt", analyticsRetentionCutoff(now)),
+      )
+      .take(limit);
+    for (const row of expiredEvents) await ctx.db.delete(row._id);
+
+    const expiredFeedback = await ctx.db
+      .query("feedback")
+      .withIndex("by_created", (q) =>
+        q.lt("createdAt", feedbackRetentionCutoff(now)),
+      )
+      .take(limit);
+    for (const row of expiredFeedback) await ctx.db.delete(row._id);
+
+    return {
+      analyticsEvents: expiredEvents.length,
+      feedback: expiredFeedback.length,
+      complete: expiredEvents.length < limit && expiredFeedback.length < limit,
     };
   },
 });

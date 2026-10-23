@@ -1,6 +1,7 @@
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { getAuthUserId } from "@convex-dev/auth/server";
+import { consumeQuota, FEEDBACK_LIMIT, FEEDBACK_WINDOW_MS } from "./rateLimit";
 
 import type { QueryCtx } from "./_generated/server";
 
@@ -86,12 +87,34 @@ export const submit = mutation({
     problem: v.optional(v.string()),
     email: v.optional(v.string()),
     path: v.optional(v.string()),
+    /** Client-side visitor identity for the storage quota (see handler). */
+    visitorId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const rating = Math.round(args.rating);
     if (rating < 1 || rating > 5) throw new Error("Rating must be between 1 and 5.");
-
+    // Phase 9A: this endpoint is public, so a per-visitor rolling quota
+    // bounds how many rows one identity can insert (same machinery and
+    // client-supplied-identity caveat as the scanner's save-scan quota).
+    // Retention (analytics.deleteExpiredAnalytics) bounds the tail.
+    const { visitorId, ...doc } = args;
+    const visitor = visitorId?.trim().slice(0, 64) || "anonymous";
+    const quota = await consumeQuota(ctx, {
+      key: `feedback:${visitor}`,
+      limit: FEEDBACK_LIMIT,
+      windowMs: FEEDBACK_WINDOW_MS,
+    });
+    if (!quota.allowed) {
+      throw new ConvexError({
+        code: "rate_limited",
+        scope: "feedback",
+        retryAfterMs: quota.retryAfterMs,
+        limit: FEEDBACK_LIMIT,
+        message: "Thanks — that's a lot of feedback for one sitting. Please try again later.",
+      });
+    }
     await ctx.db.insert("feedback", {
+      ...doc,
       rating,
       thought: clean(args.thought),
       improve: clean(args.improve),

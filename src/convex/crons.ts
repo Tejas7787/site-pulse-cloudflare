@@ -60,6 +60,19 @@ crons.interval(
   {},
 );
 
+// Phase 9A: bounded retention for the two PUBLIC write endpoints
+// (analytics.track and feedback.submit). Both are unauthenticated, so their
+// tables need a scheduled sweep with a fixed window (./retention.ts,
+// ANALYTICS_RETENTION_DAYS) — the quota added alongside this bounds the rate,
+// the retention bounds the tail regardless of how identities rotate. Indexed
+// by_created range deletes; steady-state cost is one no-op per hour.
+crons.interval(
+  "delete expired analytics and feedback",
+  { hours: 1 },
+  internal.analytics.deleteExpiredAnalytics,
+  { maxDeletes: 200 },
+);
+
 // Phase 5: expired GitHub OAuth states (single-use, 10-minute TTL) and stale
 // repair proposals (7-day TTL, they embed reviewed file contents). Bounded
 // batch; steady-state cost is one indexed no-op per hour.

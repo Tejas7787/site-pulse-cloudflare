@@ -4,7 +4,14 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "fs";
 import { join } from "path";
-import { SCAN_RETENTION_DAYS, isScanExpired, scanRetentionCutoff } from "../src/convex/retention";
+import {
+  ANALYTICS_RETENTION_DAYS,
+  SCAN_RETENTION_DAYS,
+  analyticsRetentionCutoff,
+  feedbackRetentionCutoff,
+  isScanExpired,
+  scanRetentionCutoff,
+} from "../src/convex/retention";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const NOW = Date.UTC(2026, 9, 9, 12, 0, 0);
@@ -70,5 +77,54 @@ describe("scan retention rules", () => {
     expect(scans).toContain('take(max)'); // bounded batch
     expect(scans).toContain('ctx.db.delete(doc._id)'); // explicit per-doc delete of scans only
     expect(scans).not.toContain('db.deleteAll');
+  });
+});
+
+describe("analytics & feedback retention rules (Phase 9A)", () => {
+  test("analytics window is 90 days — longer than every trend the dashboard shows", () => {
+    expect(ANALYTICS_RETENTION_DAYS).toBe(90);
+    expect(ANALYTICS_RETENTION_DAYS).toBeGreaterThanOrEqual(30);
+  });
+
+  test("cutoffs are exactly 90 days before now", () => {
+    expect(analyticsRetentionCutoff(NOW)).toBe(NOW - 90 * DAY_MS);
+    expect(feedbackRetentionCutoff(NOW)).toBe(NOW - 90 * DAY_MS);
+  });
+
+  test("the sweep is internal-only, indexed, strictly-older-than and bounded", () => {
+    const analytics = readFileSync(
+      join(import.meta.dir, "..", "src", "convex", "analytics.ts"),
+      "utf8",
+    );
+    expect(analytics).toContain("internalMutation");
+    expect(analytics).toContain('withIndex("by_created"'); // indexed — no full scans
+    expect(analytics).toContain('take(limit)'); // bounded batch
+    expect(analytics).not.toContain("deleteAll");
+    // Only the two public-write tables are reachable from the sweep.
+    expect(analytics).toContain('query("analyticsEvents")');
+    expect(analytics).toContain('query("feedback")');
+  });
+
+  test("the sweep is scheduled", () => {
+    const crons = readFileSync(
+      join(import.meta.dir, "..", "src", "convex", "crons.ts"),
+      "utf8",
+    );
+    expect(crons).toContain("internal.analytics.deleteExpiredAnalytics");
+  });
+
+  test("both public write endpoints consume a quota before inserting", () => {
+    const analytics = readFileSync(
+      join(import.meta.dir, "..", "src", "convex", "analytics.ts"),
+      "utf8",
+    );
+    expect(analytics).toContain("consumeQuota");
+    expect(analytics).toContain("ANALYTICS_EVENT_LIMIT");
+    const feedback = readFileSync(
+      join(import.meta.dir, "..", "src", "convex", "feedback.ts"),
+      "utf8",
+    );
+    expect(feedback).toContain("consumeQuota");
+    expect(feedback).toContain("FEEDBACK_LIMIT");
   });
 });

@@ -49,6 +49,25 @@ export const FIX_PROPOSAL_LIMIT = FIX_PROPOSAL_LIMIT_PER_HOUR;
 /** Length of the fix-proposal window. */
 export const FIX_PROPOSAL_WINDOW = FIX_PROPOSAL_WINDOW_MS;
 
+// Phase 9A: throttles for the two remaining PUBLIC write endpoints.
+// analytics.track fires automatically on page views and feedback.submit is a
+// footer form — both were reachable with no server-side bound at all, so a
+// single caller could insert rows without limit. Same client-supplied-visitor
+// identity caveat as every quota above: this bounds honest traffic and damp
+// casual abuse; it is NOT authorization, and retention (./retention.ts)
+// bounds the tail regardless of identity rotation.
+
+/** Analytics events allowed per visitor per window. Telemetry must never
+ * break the page, so a denied event is silently dropped, not thrown. */
+export const ANALYTICS_EVENT_LIMIT = 120;
+/** Length of the analytics window. */
+export const ANALYTICS_EVENT_WINDOW_MS = 60 * 60 * 1000; // 1 hour
+
+/** Feedback submissions allowed per visitor per window. */
+export const FEEDBACK_LIMIT = 5;
+/** Length of the feedback window. */
+export const FEEDBACK_WINDOW_MS = 60 * 60 * 1000; // 1 hour
+
 export interface QuotaResult {
   allowed: boolean;
   /** Requests still available inside the current window. */

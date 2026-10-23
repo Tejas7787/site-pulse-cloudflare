@@ -119,8 +119,10 @@ export async function fetchTarget(
           return { ok: false, kind: "redirect-loop", message: "The site redirected in a loop." };
         }
         currentUrl = next;
-        // Drain the body so the socket can be reused/discarded cleanly.
-        try { await response.arrayBuffer(); } catch { /* ignore */ }
+        // Release the redirect response's body WITHOUT buffering it: a
+        // hostile server could send an unbounded body on every hop, and this
+        // drain exists only to free the connection, not to read the content.
+        try { await response.body?.cancel(); } catch { /* ignore */ }
         continue;
       }
       break;
@@ -160,17 +162,40 @@ export async function fetchTarget(
   let bytes = 0;
   let truncated = false;
   if (readBody) {
+    // Stream the body with a HARD byte cap. The target URL is caller-chosen,
+    // so a hostile server could stream gigabytes; buffering the whole thing
+    // before checking the size (the old arrayBuffer approach) turned the
+    // public scanner/probe into a remote memory-exhaustion vector. Now the
+    // stream is cancelled the moment the cap is exceeded — memory stays
+    // bounded by maxBytes no matter what the server sends.
     try {
-      const buffer = await response.arrayBuffer();
-      bytes = buffer.byteLength;
-      if (bytes > maxBytes) {
-        return {
-          ok: false,
-          kind: "too-large",
-          message: "The page is too large to analyze (over 5 MB). Try a different page.",
-        };
+      const reader = response.body?.getReader();
+      if (reader) {
+        const chunks: Uint8Array[] = [];
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (value) {
+            bytes += value.byteLength;
+            if (bytes > maxBytes) {
+              try { await reader.cancel(); } catch { /* ignore */ }
+              return {
+                ok: false,
+                kind: "too-large",
+                message: "The page is too large to analyze (over 5 MB). Try a different page.",
+              };
+            }
+            chunks.push(value);
+          }
+        }
+        const combined = new Uint8Array(bytes);
+        let offset = 0;
+        for (const chunk of chunks) {
+          combined.set(chunk, offset);
+          offset += chunk.byteLength;
+        }
+        body = new TextDecoder("utf-8", { fatal: false }).decode(combined);
       }
-      body = new TextDecoder("utf-8", { fatal: false }).decode(buffer);
       const declared = response.headers.get("content-length");
       if (declared && Number(declared) > bytes) truncated = true;
     } catch {

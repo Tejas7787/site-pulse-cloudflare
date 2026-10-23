@@ -40,6 +40,24 @@ export function alertRetentionCutoff(now: number): number {
   return now - ALERT_RETENTION_DAYS * DAY_MS;
 }
 
+// ── Product analytics & feedback retention ──────────────────────────────────
+// Phase 9A: the public analytics collector (analytics.track) and the feedback
+// form (feedback.submit) are unauthenticated write endpoints, so their rows
+// must not live forever. 90 days keeps every trend the admin dashboard shows
+// (30 days) exact while bounding table growth. Both tables carry a by_created
+// index, so the sweep is an indexed range delete, never a full scan.
+
+/** Days first-party analytics events and feedback rows are kept. */
+export const ANALYTICS_RETENTION_DAYS = 90;
+
+export function analyticsRetentionCutoff(now: number): number {
+  return now - ANALYTICS_RETENTION_DAYS * DAY_MS;
+}
+
+export function feedbackRetentionCutoff(now: number): number {
+  return now - ANALYTICS_RETENTION_DAYS * DAY_MS;
+}
+
 /** A scan document is expired once its server-side `scannedAt` predates the cutoff. */
 export function isScanExpired(scannedAt: number, now: number): boolean {
   return scannedAt < scanRetentionCutoff(now);
