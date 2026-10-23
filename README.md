@@ -98,7 +98,9 @@ With the variable unset (the default), `startCheckout` and
    `npx convex env set RESEND_FROM_EMAIL "SitePulse <alerts@yourdomain.com>"`
    (The legacy name `RESEND_FROM` is still honored.) If neither is set — or
    the value is malformed — mail is sent from the project's verified default
-   sender, `SitePulse <alerts@tejasdev.xyz>`.
+   sender, `SitePulse Alerts <alerts@alerts.tejasdev.xyz>`. The verified
+   domain is the SUBDOMAIN `alerts.tejasdev.xyz`; the readiness query reports
+   this as the value-free boolean `email.fromOnVerifiedDomain`.
    To smoke-test delivery without a real incident, a signed-in operator can
    call the authenticated action `alerts:sendTestEmail` with `{"to": "you@…"}`
    (3 per hour per account; refuses anonymous callers).

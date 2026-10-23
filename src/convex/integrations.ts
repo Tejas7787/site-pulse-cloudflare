@@ -1,5 +1,6 @@
 import { query } from "./_generated/server";
 import { providerMode, simulatedBillingEnabled } from "./billing";
+import { configuredSenderIsVerified } from "../lib/alerts";
 
 // ── Phase 9B: integration readiness (configuration checks only) ──────────────
 // One read-only query that tells an operator (or the pricing page) which
@@ -46,6 +47,16 @@ export const getIntegrationStatus = query({
           process.env.RESEND_FROM_EMAIL?.trim() ||
             process.env.RESEND_FROM?.trim(),
         ),
+        // Whether the sender the deployment would actually use (resolved
+        // value, or the verified default when unset) sits on the Resend-
+        // verified subdomain. A BOOLEAN derived from the env values — the
+        // configured address itself is never echoed. False means sends would
+        // come from (or fall back around) an unverified domain and the
+        // operator must fix the env var.
+        fromOnVerifiedDomain: configuredSenderIsVerified([
+          process.env.RESEND_FROM_EMAIL,
+          process.env.RESEND_FROM,
+        ]),
       },
     };
   },

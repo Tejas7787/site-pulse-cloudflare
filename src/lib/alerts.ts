@@ -18,8 +18,15 @@ const EMAIL_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 // so the resolution logic is unit-testable and can never touch an env value
 // in the browser bundle.
 
+/**
+ * The Resend-verified domain for this project. Deliberately the SUBDOMAIN
+ * alerts.tejasdev.xyz — the root domain tejasdev.xyz is NOT verified for
+ * sending, so any sender outside this exact domain fails closed.
+ */
+export const VERIFIED_SENDER_DOMAIN = "alerts.tejasdev.xyz";
+
 /** Verified-sender default: used when no sender env var is configured. */
-export const DEFAULT_ALERT_FROM = "SitePulse <alerts@tejasdev.xyz>";
+export const DEFAULT_ALERT_FROM = `SitePulse Alerts <alerts@${VERIFIED_SENDER_DOMAIN}>`;
 
 /** Accepts `email@example.com` or a display form `Name <email@example.com>`. */
 const FROM_SHAPE = /^(?:[^<>"\n]*<)?[^\s@<>"\n]+@[^\s@<>"\n]+\.[^\s@<>"\n]{2,}>?$/;
@@ -44,6 +51,35 @@ export function resolveAlertFrom(
     if (trimmed && FROM_SHAPE.test(trimmed)) return trimmed;
   }
   return DEFAULT_ALERT_FROM;
+}
+
+/**
+ * Extract the domain of a From candidate (`a@b.c` or `Name <a@b.c>`),
+ * lowercased; null when the candidate is not a parseable address.
+ */
+export function fromDomain(
+  value: string | null | undefined,
+): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  const addr = trimmed.includes("<")
+    ? (trimmed.match(/<([^<>]+)>/)?.[1] ?? null)
+    : trimmed;
+  const candidate = addr?.trim();
+  if (!candidate || !EMAIL_SHAPE.test(candidate)) return null;
+  return candidate.split("@").pop()?.toLowerCase() ?? null;
+}
+
+/**
+ * True when the sender resolveAlertFrom WOULD pick is on the verified domain
+ * — including the no-config default (which is verified by construction).
+ * Pure and value-free: callers get a boolean and can never echo the
+ * configured address from it.
+ */
+export function configuredSenderIsVerified(
+  candidates: Array<string | null | undefined>,
+): boolean {
+  return fromDomain(resolveAlertFrom(candidates)) === VERIFIED_SENDER_DOMAIN;
 }
 
 /** Validate a recipient address (same deliberately simple shape as feedback). */

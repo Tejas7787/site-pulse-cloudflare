@@ -23,6 +23,11 @@ import type { Id } from "../src/convex/_generated/dataModel";
 import schema from "../src/convex/schema";
 import { ALERT_MAX_AGE_MS } from "../src/lib/monitoring";
 import { DEFAULT_ALERT_FROM, resolveAlertFrom } from "../src/lib/alerts";
+import {
+  configuredSenderIsVerified,
+  fromDomain,
+  VERIFIED_SENDER_DOMAIN,
+} from "../src/lib/alerts";
 import { TEST_EMAIL_LIMIT_PER_HOUR } from "../src/convex/alerts";
 
 const modules = {
@@ -552,17 +557,53 @@ describe("getIntegrationStatus (focus: safe configuration checks)", () => {
 describe("alert sender resolution (RESEND_FROM_EMAIL → RESEND_FROM → verified default)", () => {
   test("pure precedence: canonical name wins, then legacy, then the verified default", () => {
     expect(
-      resolveAlertFrom(["SitePulse <alerts@tejasdev.xyz>", "legacy@x.test"]),
-    ).toBe("SitePulse <alerts@tejasdev.xyz>");
+      resolveAlertFrom(["SitePulse Alerts <alerts@alerts.tejasdev.xyz>", "legacy@x.test"]),
+    ).toBe("SitePulse Alerts <alerts@alerts.tejasdev.xyz>");
     expect(resolveAlertFrom([undefined, "SitePulse <legacy@x.test>"])).toBe(
       "SitePulse <legacy@x.test>",
     );
     expect(resolveAlertFrom(["  padded@example.com  "])).toBe("padded@example.com");
 
-    // The project default IS the verified sender domain (requirement).
-    expect(DEFAULT_ALERT_FROM).toBe("SitePulse <alerts@tejasdev.xyz>");
+    // The project default IS the verified SENDER SUBDOMAIN (requirement):
+    // alerts.tejasdev.xyz, NOT the root tejasdev.xyz.
+    expect(VERIFIED_SENDER_DOMAIN).toBe("alerts.tejasdev.xyz");
+    expect(DEFAULT_ALERT_FROM).toBe(
+      "SitePulse Alerts <alerts@alerts.tejasdev.xyz>",
+    );
     expect(resolveAlertFrom([])).toBe(DEFAULT_ALERT_FROM);
     expect(resolveAlertFrom([undefined, undefined])).toBe(DEFAULT_ALERT_FROM);
+  });
+
+  test("fromDomain parses both From forms; garbage parses to null", () => {
+    expect(fromDomain("alerts@alerts.tejasdev.xyz")).toBe("alerts.tejasdev.xyz");
+    expect(fromDomain("SitePulse Alerts <alerts@alerts.tejasdev.xyz>")).toBe(
+      "alerts.tejasdev.xyz",
+    );
+    expect(fromDomain("  Name <A@B.Example>  ")).toBe("b.example");
+    expect(fromDomain("not-an-address")).toBeNull();
+    expect(fromDomain("")).toBeNull();
+    expect(fromDomain(undefined)).toBeNull();
+  });
+
+  test("configuredSenderIsVerified: verified subdomain only — the ROOT domain fails", () => {
+    // Unconfigured falls back to the verified default → true.
+    expect(configuredSenderIsVerified([])).toBe(true);
+    expect(configuredSenderIsVerified([undefined, undefined])).toBe(true);
+    // The exact verified sender passes, in both From forms.
+    expect(
+      configuredSenderIsVerified(["SitePulse <alerts@alerts.tejasdev.xyz>"]),
+    ).toBe(true);
+    expect(configuredSenderIsVerified(["alerts@alerts.tejasdev.xyz"])).toBe(true);
+    // THE CORRECTION THIS PINS: the root domain is NOT verified for sending.
+    expect(configuredSenderIsVerified(["SitePulse <alerts@tejasdev.xyz>"])).toBe(
+      false,
+    );
+    expect(configuredSenderIsVerified(["tejasdev.xyz <x@tejasdev.xyz>"])).toBe(
+      false,
+    );
+    expect(configuredSenderIsVerified(["someone@example.com"])).toBe(false);
+    // Garbage falls through to the verified default → true.
+    expect(configuredSenderIsVerified(["not-an-address"])).toBe(true);
   });
 
   test("malformed configured values fall through instead of sending from a bad From", () => {
@@ -631,7 +672,7 @@ describe("alert sender resolution (RESEND_FROM_EMAIL → RESEND_FROM → verifie
     await withEnv(
       {
         RESEND_API_KEY: "re_test_fake_key",
-        RESEND_FROM_EMAIL: "SitePulse <alerts@tejasdev.xyz>",
+        RESEND_FROM_EMAIL: "SitePulse Alerts <alerts@alerts.tejasdev.xyz>",
         RESEND_FROM: undefined,
       },
       async () => {
@@ -642,7 +683,7 @@ describe("alert sender resolution (RESEND_FROM_EMAIL → RESEND_FROM → verifie
         const res = await t.action(internal.alerts.sendQueued, {});
         expect(res.sent).toBe(1);
         expect(calls).toHaveLength(1);
-        expect(calls[0].from).toBe("SitePulse <alerts@tejasdev.xyz>");
+        expect(calls[0].from).toBe("SitePulse Alerts <alerts@alerts.tejasdev.xyz>");
       },
     );
   });
@@ -681,11 +722,11 @@ describe("alert sender resolution (RESEND_FROM_EMAIL → RESEND_FROM → verifie
     );
   });
 
-  test("status reports sender presence under either name — values never echoed", async () => {
+  test("status reports sender presence and verified-domain match — values never echoed", async () => {
     await withEnv(
       {
         RESEND_API_KEY: "re_canary_secretvalue",
-        RESEND_FROM_EMAIL: "SitePulse <alerts@tejasdev.xyz>",
+        RESEND_FROM_EMAIL: "SitePulse Alerts <alerts@alerts.tejasdev.xyz>",
         RESEND_FROM: undefined,
       },
       async () => {
@@ -693,19 +734,40 @@ describe("alert sender resolution (RESEND_FROM_EMAIL → RESEND_FROM → verifie
         const status = await t.query(api.integrations.getIntegrationStatus, {});
         expect(status.email.resendConfigured).toBe(true);
         expect(status.email.customFromConfigured).toBe(true);
+        expect(status.email.fromOnVerifiedDomain).toBe(true);
         const serialized = JSON.stringify(status);
         expect(serialized).not.toContain("re_canary_secretvalue");
         // The configured From VALUE is an env value too — never echoed.
-        expect(serialized).not.toContain("alerts@tejasdev.xyz");
+        expect(serialized).not.toContain("alerts@alerts.tejasdev.xyz");
+        expect(serialized).not.toContain("tejasdev.xyz");
       },
     );
 
+    // A sender pointed at the ROOT domain (or anywhere else unverified) is
+    // reported honestly as not-on-verified-domain — still no value echoed.
+    await withEnv(
+      {
+        RESEND_API_KEY: "re_test_fake_key",
+        RESEND_FROM_EMAIL: "SitePulse <alerts@tejasdev.xyz>",
+        RESEND_FROM: undefined,
+      },
+      async () => {
+        const t = freshBackend();
+        const status = await t.query(api.integrations.getIntegrationStatus, {});
+        expect(status.email.customFromConfigured).toBe(true);
+        expect(status.email.fromOnVerifiedDomain).toBe(false);
+        expect(JSON.stringify(status)).not.toContain("tejasdev.xyz");
+      },
+    );
+
+    // Unset sender → falls back to the verified default → reported true.
     await withEnv(
       { RESEND_API_KEY: undefined, RESEND_FROM_EMAIL: undefined, RESEND_FROM: undefined },
       async () => {
         const t = freshBackend();
         const status = await t.query(api.integrations.getIntegrationStatus, {});
         expect(status.email.customFromConfigured).toBe(false);
+        expect(status.email.fromOnVerifiedDomain).toBe(true);
       },
     );
   });
@@ -747,7 +809,7 @@ describe("sendTestEmail (safe, authenticated, server-side only)", () => {
 
   test("missing RESEND_API_KEY refuses honestly — no env values in the error", async () => {
     await withEnv(
-      { RESEND_API_KEY: undefined, RESEND_FROM_EMAIL: "SitePulse <alerts@tejasdev.xyz>" },
+      { RESEND_API_KEY: undefined, RESEND_FROM_EMAIL: "SitePulse Alerts <alerts@alerts.tejasdev.xyz>" },
       async () => {
         const t = freshBackend();
         const userId = await createTestUser(t, "operator@x.test");
@@ -760,7 +822,7 @@ describe("sendTestEmail (safe, authenticated, server-side only)", () => {
           const data = (err as ConvexError<{ code?: string; message?: string }>).data;
           expect(data.code).toBe("not_configured");
           expect(data.message).toContain("RESEND_API_KEY");
-          expect(data.message).not.toContain("alerts@tejasdev.xyz");
+          expect(data.message).not.toContain("alerts.tejasdev.xyz");
         }
       },
     );
@@ -770,7 +832,7 @@ describe("sendTestEmail (safe, authenticated, server-side only)", () => {
     await withEnv(
       {
         RESEND_API_KEY: "re_supersecret_canary",
-        RESEND_FROM_EMAIL: "SitePulse <alerts@tejasdev.xyz>",
+        RESEND_FROM_EMAIL: "SitePulse Alerts <alerts@alerts.tejasdev.xyz>",
       },
       async () => {
         const calls: Array<Record<string, unknown>> = [];
@@ -785,7 +847,7 @@ describe("sendTestEmail (safe, authenticated, server-side only)", () => {
         if (res.ok) expect(res.providerId).toBe("email_1");
 
         expect(calls).toHaveLength(1);
-        expect(calls[0].from).toBe("SitePulse <alerts@tejasdev.xyz>");
+        expect(calls[0].from).toBe("SitePulse Alerts <alerts@alerts.tejasdev.xyz>");
         expect(calls[0].to).toEqual(["operator@x.test"]);
         expect(String(calls[0].subject)).toContain("test email");
 
