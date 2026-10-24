@@ -37,6 +37,8 @@ const modules = {
   "billingActions.ts": () => import("../src/convex/billingActions.ts"),
   "alerts.ts": () => import("../src/convex/alerts.ts"),
   "integrations.ts": () => import("../src/convex/integrations.ts"),
+  // Phase 10B: the billing webhook HTTP routes are tested through `t.fetch`.
+  "http.ts": () => import("../src/convex/http.ts"),
 };
 
 function freshBackend() {
@@ -906,5 +908,238 @@ describe("sendTestEmail (safe, authenticated, server-side only)", () => {
         expect(res.error).not.toContain("re_supersecret_canary");
       }
     });
+  });
+});
+
+/* ── 6. Billing webhook HTTP routes: fail-closed status contract ──────────── */
+
+// Real route-level tests through convex-test's `t.fetch` — the exact statuses
+// a provider would see: 503 when no webhook secret is configured, 401 for a
+// bad signature, 400 for a malformed or LIVE-mode payload, and a signed
+// end-to-end test-mode activation. No network and no real credentials: every
+// signature here is computed with a fake secret over the raw body, exactly
+// like the provider would.
+describe("billing webhook HTTP routes (Phase 10B)", () => {
+  const STRIPE_ROUTE_SECRET = "whsec_route_test_secret";
+  const RAZORPAY_ROUTE_SECRET = "rzpwhsec_route_test_secret";
+
+  async function hmacHex(secret: string, data: string): Promise<string> {
+    const key = await crypto.subtle.importKey(
+      "raw",
+      new TextEncoder().encode(secret),
+      { name: "HMAC", hash: "SHA-256" },
+      false,
+      ["sign"],
+    );
+    const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(data));
+    return Array.from(new Uint8Array(sig))
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+  }
+
+  /** Stripe's `Stripe-Signature` header over the raw payload. */
+  async function stripeHeader(
+    payload: string,
+    secret: string,
+    ts = Math.floor(Date.now() / 1000),
+  ): Promise<string> {
+    const v1 = await hmacHex(secret, `${ts}.${payload}`);
+    return `t=${ts},v1=${v1}`;
+  }
+
+  const checkoutCompletedEvent = (livemode: boolean) =>
+    JSON.stringify({
+      id: "evt_route_checkout",
+      type: "checkout.session.completed",
+      created: Math.floor(Date.now() / 1000),
+      livemode,
+      data: {
+        object: {
+          id: "cs_test_route_1",
+          object: "checkout.session",
+          amount_total: 29_900,
+          currency: "inr",
+          subscription: "sub_test_route_1",
+          status: "complete",
+        },
+      },
+    });
+
+  async function seedPendingStripeCheckout(t: ReturnType<typeof freshBackend>) {
+    const userId = await createTestUser(t, "buyer@x.test");
+    // The real internal mutation validates the amount against the catalog.
+    await t.mutation(internal.billing.insertProviderCheckout, {
+      userId,
+      plan: "pro",
+      currency: "INR",
+      amount: 29_900,
+      provider: "stripe",
+      providerCheckoutId: "cs_test_route_1",
+      ttlMs: 60_000,
+    });
+    return { userId };
+  }
+
+  test("missing webhook secret → 503 on both routes, nothing is processed", async () => {
+    await withEnv(
+      { STRIPE_WEBHOOK_SECRET: undefined, RAZORPAY_WEBHOOK_SECRET: undefined },
+      async () => {
+        const t = freshBackend();
+        const res = await t.fetch("/billing/webhooks/stripe", {
+          method: "POST",
+          body: JSON.stringify({ id: "evt_x", type: "checkout.session.completed" }),
+        });
+        expect(res.status).toBe(503);
+        expect(await res.json()).toEqual({ error: "webhook_not_configured" });
+
+        const rzp = await t.fetch("/billing/webhooks/razorpay", {
+          method: "POST",
+          body: JSON.stringify({ id: "evt_y", event: "payment.captured" }),
+        });
+        expect(rzp.status).toBe(503);
+        expect(await rzp.json()).toEqual({ error: "webhook_not_configured" });
+
+        // Fail closed: nothing reached the backend at all.
+        const events = await t.run(async (ctx) => ctx.db.query("billingEvents").collect());
+        expect(events).toHaveLength(0);
+      },
+    );
+  });
+
+  test("invalid signature → 401, state untouched", async () => {
+    await withEnv({ STRIPE_WEBHOOK_SECRET: STRIPE_ROUTE_SECRET }, async () => {
+      const t = freshBackend();
+      await seedPendingStripeCheckout(t);
+      const payload = checkoutCompletedEvent(false);
+      // Signed with the WRONG secret — an attacker without the secret.
+      const header = await stripeHeader(payload, "whsec_wrong_secret");
+
+      const res = await t.fetch("/billing/webhooks/stripe", {
+        method: "POST",
+        headers: { "Stripe-Signature": header },
+        body: payload,
+      });
+      expect(res.status).toBe(401);
+      expect(await res.json()).toEqual({ error: "invalid_signature" });
+
+      const subs = await t.run(async (ctx) => ctx.db.query("subscriptions").collect());
+      expect(subs).toHaveLength(0);
+      const events = await t.run(async (ctx) => ctx.db.query("billingEvents").collect());
+      expect(events).toHaveLength(0);
+    });
+  });
+
+  test("valid signature over a malformed payload → 400, state untouched", async () => {
+    await withEnv({ STRIPE_WEBHOOK_SECRET: STRIPE_ROUTE_SECRET }, async () => {
+      const t = freshBackend();
+      await seedPendingStripeCheckout(t);
+      const payload = "this is not json";
+      const header = await stripeHeader(payload, STRIPE_ROUTE_SECRET);
+
+      const res = await t.fetch("/billing/webhooks/stripe", {
+        method: "POST",
+        headers: { "Stripe-Signature": header },
+        body: payload,
+      });
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({ error: "invalid_json" });
+
+      const subs = await t.run(async (ctx) => ctx.db.query("subscriptions").collect());
+      expect(subs).toHaveLength(0);
+      const events = await t.run(async (ctx) => ctx.db.query("billingEvents").collect());
+      expect(events).toHaveLength(0);
+    });
+  });
+
+  test("a correctly signed LIVE-mode event → 400 live_mode_event, nothing activated", async () => {
+    await withEnv({ STRIPE_WEBHOOK_SECRET: STRIPE_ROUTE_SECRET }, async () => {
+      const t = freshBackend();
+      await seedPendingStripeCheckout(t);
+      const payload = checkoutCompletedEvent(true);
+      const header = await stripeHeader(payload, STRIPE_ROUTE_SECRET);
+
+      const res = await t.fetch("/billing/webhooks/stripe", {
+        method: "POST",
+        headers: { "Stripe-Signature": header },
+        body: payload,
+      });
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({ error: "live_mode_event" });
+
+      const subs = await t.run(async (ctx) => ctx.db.query("subscriptions").collect());
+      expect(subs).toHaveLength(0);
+      const events = await t.run(async (ctx) => ctx.db.query("billingEvents").collect());
+      expect(events).toHaveLength(0);
+    });
+  });
+
+  test("signed test-mode checkout.session.completed → 200 and the catalog plan activates (positive path)", async () => {
+    await withEnv({ STRIPE_WEBHOOK_SECRET: STRIPE_ROUTE_SECRET }, async () => {
+      const t = freshBackend();
+      const { userId } = await seedPendingStripeCheckout(t);
+      const payload = checkoutCompletedEvent(false);
+      const header = await stripeHeader(payload, STRIPE_ROUTE_SECRET);
+
+      const res = await t.fetch("/billing/webhooks/stripe", {
+        method: "POST",
+        headers: { "Stripe-Signature": header },
+        body: payload,
+      });
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ received: true, outcome: "applied" });
+
+      const subs = await t.run(async (ctx) => ctx.db.query("subscriptions").collect());
+      expect(subs).toHaveLength(1);
+      expect(subs[0].userId).toBe(userId);
+      expect(subs[0].plan).toBe("pro");
+      expect(subs[0].currency).toBe("INR");
+      // Server-owned catalog amount — never the client, never the event alone.
+      expect(subs[0].amountPerPeriod).toBe(29_900);
+      expect(subs[0].provider).toBe("stripe");
+      expect(subs[0].status).toBe("active");
+      expect(subs[0].providerSubscriptionId).toBe("sub_test_route_1");
+
+      const checkout = await t.run(async (ctx) =>
+        ctx.db.query("billingCheckouts").first(),
+      );
+      expect(checkout?.status).toBe("succeeded");
+
+      // A duplicate delivery (Stripe retry) is a no-op.
+      const retry = await t.fetch("/billing/webhooks/stripe", {
+        method: "POST",
+        headers: { "Stripe-Signature": await stripeHeader(payload, STRIPE_ROUTE_SECRET) },
+        body: payload,
+      });
+      expect(retry.status).toBe(200);
+      expect(await retry.json()).toEqual({ received: true, outcome: "duplicate" });
+      const after = await t.run(async (ctx) => ctx.db.query("subscriptions").collect());
+      expect(after).toHaveLength(1);
+    });
+  });
+
+  test("Razorpay: invalid signature → 401 with a configured secret", async () => {
+    await withEnv(
+      {
+        STRIPE_WEBHOOK_SECRET: undefined,
+        RAZORPAY_WEBHOOK_SECRET: RAZORPAY_ROUTE_SECRET,
+      },
+      async () => {
+        const t = freshBackend();
+        const payload = JSON.stringify({
+          id: "evt_rzp_route",
+          event: "payment.captured",
+          payload: { payment: { entity: { amount: 29_900, currency: "INR" } } },
+        });
+        const header = await hmacHex("rzpwhsec_wrong", payload);
+
+        const res = await t.fetch("/billing/webhooks/razorpay", {
+          method: "POST",
+          headers: { "X-Razorpay-Signature": header },
+          body: payload,
+        });
+        expect(res.status).toBe(401);
+        expect(await res.json()).toEqual({ error: "invalid_signature" });
+      },
+    );
   });
 });

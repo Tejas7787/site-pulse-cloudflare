@@ -33,6 +33,14 @@ export interface NormalizedBillingEvent {
   providerCheckoutId: string | null;
   /** Provider status string for subscription lifecycle events, if any. */
   providerStatus: string | null;
+  /**
+   * Stripe's test/live marker (`event.livemode`). TRUE means the event came
+   * from a LIVE Stripe account and must never be applied by this test-mode
+   * deployment — the HTTP route refuses it. Absent/false (every test-mode
+   * event, including CLI-forwarded ones) means the event may proceed.
+   * Razorpay has no equivalent flag and never sets this field.
+   */
+  livemode?: boolean;
 }
 
 /** Stripe sends up to 5 signatures; take the first v1 value. */
@@ -125,6 +133,7 @@ interface StripeEvent {
   id?: string;
   type?: string;
   created?: number;
+  livemode?: boolean;
   data?: { object?: StripeObject };
 }
 
@@ -160,6 +169,9 @@ export function normalizeStripeEvent(
     rawType: event.type,
     occurredAt,
     currency,
+    // Only an explicit `livemode: true` marks a live event; a missing flag
+    // is treated as not-live so test-mode behavior is fully preserved.
+    livemode: event.livemode === true,
     providerStatus: typeof obj.status === "string" ? obj.status : null,
     providerCheckoutId: null,
     providerSubscriptionId:

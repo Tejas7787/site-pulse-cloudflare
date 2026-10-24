@@ -549,6 +549,28 @@ export const applyProviderWebhook = internalMutation({
       });
     };
 
+    // ── Money events REQUIRE an amount (Phase 10B) ────────────────────────
+    // Activation and renewal are only ever applied after the event's amount
+    // is checked against the STORED checkout row and the catalog, so an event
+    // that carries no amount can never move a subscription. Event-specific
+    // requirements:
+    //   checkout_completed — REQUIRED
+    //     Stripe `checkout.session.completed` always carries `amount_total`.
+    //   renewal_paid — REQUIRED
+    //     Stripe `invoice.paid` (`amount_paid`) and Razorpay
+    //     `subscription.charged` / `payment.captured` (payment entity amount).
+    //   payment_failed — optional (never activates or extends anything;
+    //     Razorpay `subscription.halted` legitimately carries no payment).
+    //   subscription_updated / subscription_canceled / ignored — no amount
+    //     is read from these events at all.
+    if (
+      (args.type === "checkout_completed" || args.type === "renewal_paid") &&
+      args.amount === undefined
+    ) {
+      await log("rejected", `missing_amount for money event ${args.type}`);
+      return { outcome: "rejected" as const, reason: "missing_amount" as const };
+    }
+
     // Locate the subscription this event is about.
     let sub: Doc<"subscriptions"> | null = null;
     if (args.providerSubscriptionId) {

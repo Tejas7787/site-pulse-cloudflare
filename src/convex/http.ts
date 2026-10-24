@@ -86,6 +86,15 @@ http.route({
       // without retry semantics (retrying cannot fix a malformed body).
       return json(400, { error: parsed.reason });
     }
+    // TEST-MODE BOUNDARY (Phase 10B): this deployment only ever creates
+    // TEST-mode checkouts, so a signed LIVE-mode event (livemode: true) has
+    // nothing legitimate to say here and is refused BEFORE it can reach
+    // entitlement state. A missing/false flag is accepted (test behavior
+    // preserved). Razorpay has no livemode flag — for it, test-mode is
+    // enforced by the `rzp_test_` key prefix at checkout creation.
+    if (parsed.event.livemode === true) {
+      return json(400, { error: "live_mode_event" });
+    }
     const result = await ctx.runMutation(internal.billing.applyProviderWebhook, {
       provider: "stripe",
       eventId: parsed.event.providerEventId,

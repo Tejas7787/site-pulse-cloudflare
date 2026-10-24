@@ -867,3 +867,250 @@ describe("billing — plan limits at feature gates", () => {
     );
   });
 });
+
+/* ── Phase 10B — Stripe activation (positive path) & catalog authority ───── */
+
+describe("billing — Stripe checkout completion (positive path)", () => {
+  test("a verified checkout.session.completed activates exactly the stored catalog facts", async () => {
+    const s = await seed();
+    await s.ctx.db.insert("billingCheckouts", {
+      userId: s.userId,
+      plan: "agency",
+      currency: "USD",
+      amount: amountFor("agency", "USD"),
+      provider: "stripe",
+      status: "pending",
+      providerCheckoutId: "cs_test_positive",
+      createdAt: 1,
+      expiresAt: Date.now() + 60_000,
+    });
+
+    const res = (await handler(billing.applyProviderWebhook)._handler(s.ctx, {
+      provider: "stripe",
+      eventId: "evt_stripe_positive",
+      type: "checkout_completed",
+      rawType: "checkout.session.completed",
+      occurredAt: Date.now(),
+      amount: amountFor("agency", "USD"),
+      currency: "USD",
+      providerCheckoutId: "cs_test_positive",
+      providerSubscriptionId: "sub_positive_1",
+    })) as { outcome: string };
+    expect(res.outcome).toBe("applied");
+
+    const sub = (s.tables.subscriptions ?? [])[0];
+    expect(sub.userId).toBe(s.userId);
+    expect(sub.plan).toBe("agency");
+    expect(sub.currency).toBe("USD");
+    expect(sub.amountPerPeriod).toBe(amountFor("agency", "USD"));
+    expect(sub.provider).toBe("stripe");
+    expect(sub.status).toBe("active");
+    expect(sub.providerSubscriptionId).toBe("sub_positive_1");
+    expect(typeof sub.currentPeriodEnd).toBe("number");
+    expect((s.tables.billingCheckouts ?? [])[0].status).toBe("succeeded");
+    // One audit row, exactly applied.
+    expect((s.tables.billingEvents ?? []).map((e) => e.outcome)).toEqual(["applied"]);
+  });
+
+  test("the CATALOG price wins: a tampered checkout row cannot lower the price", async () => {
+    const s = await seed();
+    // A checkout row whose amount was somehow below the catalog price. The
+    // event matches the tampered row but not the catalog — rejected.
+    await s.ctx.db.insert("billingCheckouts", {
+      userId: s.userId,
+      plan: "pro",
+      currency: "INR",
+      amount: 1, // tampered: catalog is 29_900
+      provider: "stripe",
+      status: "pending",
+      providerCheckoutId: "cs_test_tampered",
+      createdAt: 1,
+      expiresAt: Date.now() + 60_000,
+    });
+
+    const res = (await handler(billing.applyProviderWebhook)._handler(s.ctx, {
+      provider: "stripe",
+      eventId: "evt_stripe_tampered",
+      type: "checkout_completed",
+      rawType: "checkout.session.completed",
+      occurredAt: Date.now(),
+      amount: 1,
+      currency: "INR",
+      providerCheckoutId: "cs_test_tampered",
+    })) as { outcome: string };
+    expect(res.outcome).toBe("rejected");
+    expect((s.tables.subscriptions ?? []).length).toBe(0);
+    expect((s.tables.billingCheckouts ?? [])[0].status).toBe("pending");
+  });
+});
+
+/* ── Phase 10B — money events REQUIRE an amount ───────────────────────────────
+ * Documented matrix (enforced in applyProviderWebhook):
+ *   checkout_completed → amount REQUIRED  (Stripe checkout.session.completed)
+ *   renewal_paid       → amount REQUIRED  (invoice.paid / subscription.charged)
+ *   payment_failed     → amount OPTIONAL  (never activates; subscription.halted
+ *                                          legitimately carries no payment)
+ *   subscription_updated / subscription_canceled / ignored → amount not read
+ */
+
+describe("billing — money events require an amount (Phase 10B)", () => {
+  test("checkout_completed without an amount activates nothing", async () => {
+    const s = await seed();
+    await s.ctx.db.insert("billingCheckouts", {
+      userId: s.userId,
+      plan: "pro",
+      currency: "INR",
+      amount: 29_900,
+      provider: "stripe",
+      status: "pending",
+      providerCheckoutId: "cs_test_noamount",
+      createdAt: 1,
+      expiresAt: Date.now() + 60_000,
+    });
+
+    const res = (await handler(billing.applyProviderWebhook)._handler(s.ctx, {
+      provider: "stripe",
+      eventId: "evt_noamount_1",
+      type: "checkout_completed",
+      rawType: "checkout.session.completed",
+      occurredAt: Date.now(),
+      // amount deliberately omitted
+      currency: "INR",
+      providerCheckoutId: "cs_test_noamount",
+    })) as { outcome: string; reason?: string };
+    expect(res.outcome).toBe("rejected");
+    expect(res.reason).toBe("missing_amount");
+    expect((s.tables.subscriptions ?? []).length).toBe(0);
+    expect((s.tables.billingCheckouts ?? [])[0].status).toBe("pending");
+    expect((s.tables.billingEvents ?? [])[0].outcome).toBe("rejected");
+  });
+
+  test("a first renewal_paid without an amount cannot activate from a stored checkout", async () => {
+    const s = await seed();
+    await s.ctx.db.insert("billingCheckouts", {
+      userId: s.userId,
+      plan: "pro",
+      currency: "INR",
+      amount: 29_900,
+      provider: "razorpay",
+      status: "pending",
+      providerCheckoutId: "rzp_sub_noamount",
+      createdAt: 1,
+      expiresAt: Date.now() + 60_000,
+    });
+
+    const res = (await handler(billing.applyProviderWebhook)._handler(s.ctx, {
+      provider: "razorpay",
+      eventId: "evt_noamount_2",
+      type: "renewal_paid",
+      rawType: "subscription.charged",
+      occurredAt: Date.now(),
+      providerSubscriptionId: "rzp_sub_noamount",
+      providerCheckoutId: "rzp_sub_noamount",
+    })) as { outcome: string; reason?: string };
+    expect(res.outcome).toBe("rejected");
+    expect(res.reason).toBe("missing_amount");
+    expect((s.tables.subscriptions ?? []).length).toBe(0);
+    expect((s.tables.billingCheckouts ?? [])[0].status).toBe("pending");
+  });
+
+  test("renewal_paid without an amount never extends an active subscription", async () => {
+    const now = Date.now();
+    const s = await seed({ plan: "pro", providerSubscriptionId: "sub_noamt" });
+    const before = (s.tables.subscriptions ?? [])[0] as Row;
+    const periodEnd = before.currentPeriodEnd;
+
+    const res = (await handler(billing.applyProviderWebhook)._handler(s.ctx, {
+      provider: "stripe",
+      eventId: "evt_noamount_3",
+      type: "renewal_paid",
+      rawType: "invoice.paid",
+      occurredAt: now,
+      providerSubscriptionId: "sub_noamt",
+    })) as { outcome: string; reason?: string };
+    expect(res.outcome).toBe("rejected");
+    expect(res.reason).toBe("missing_amount");
+
+    const after = (s.tables.subscriptions ?? [])[0];
+    expect(after.currentPeriodEnd).toBe(periodEnd);
+    expect(after.status).toBe("active");
+    expect(after.updatedAt).toBe(before.updatedAt);
+  });
+
+  test("payment_failed and subscription_updated still apply WITHOUT an amount (documented behavior)", async () => {
+    const now = Date.now();
+    const s = await seed({ plan: "pro", providerSubscriptionId: "sub_lifecycle" });
+
+    const failed = (await handler(billing.applyProviderWebhook)._handler(s.ctx, {
+      provider: "razorpay",
+      eventId: "evt_lifecycle_1",
+      type: "payment_failed",
+      rawType: "subscription.halted", // no payment entity → no amount, by design
+      occurredAt: now,
+      providerSubscriptionId: "sub_lifecycle",
+    })) as { outcome: string };
+    expect(failed.outcome).toBe("applied");
+    const sub = (s.tables.subscriptions ?? [])[0];
+    expect(sub.status).toBe("past_due");
+    expect(typeof sub.pastDueGraceUntil).toBe("number");
+
+    const updated = (await handler(billing.applyProviderWebhook)._handler(s.ctx, {
+      provider: "stripe",
+      eventId: "evt_lifecycle_2",
+      type: "subscription_updated",
+      rawType: "customer.subscription.updated", // amount never read from this event
+      occurredAt: now + 1_000,
+      providerSubscriptionId: "sub_lifecycle",
+      providerStatus: "active",
+    })) as { outcome: string };
+    expect(updated.outcome).toBe("applied");
+    expect((s.tables.subscriptions ?? [])[0].status).toBe("active");
+    expect((s.tables.subscriptions ?? [])[0].pastDueGraceUntil).toBeUndefined();
+  });
+});
+
+/* ── Phase 10B — Stripe livemode flag ────────────────────────────────────── */
+
+describe("billing — Stripe livemode normalization", () => {
+  const stripePayload = (livemode?: boolean) =>
+    JSON.stringify({
+      id: "evt_livemode_1",
+      type: "checkout.session.completed",
+      created: 1_700_000_000,
+      ...(livemode === undefined ? {} : { livemode }),
+      data: {
+        object: {
+          id: "cs_live_1",
+          amount_total: 29_900,
+          currency: "inr",
+          subscription: "sub_live_1",
+        },
+      },
+    });
+
+  test("livemode:true is flagged as a live event; test-mode and absent flags are not", () => {
+    const live = normalizeStripeEvent(stripePayload(true));
+    expect(live.ok).toBe(true);
+    expect(live.ok ? live.event.livemode : undefined).toBe(true);
+
+    const testMode = normalizeStripeEvent(stripePayload(false));
+    expect(testMode.ok ? testMode.event.livemode : undefined).toBe(false);
+
+    const absent = normalizeStripeEvent(stripePayload(undefined));
+    expect(absent.ok ? absent.event.livemode : undefined).toBe(false);
+    // Everything else is normalized identically — only the flag differs.
+    expect(absent.ok ? absent.event.type : "not_ok").toBe("checkout_completed");
+  });
+
+  test("Razorpay events never carry the Stripe-only flag", () => {
+    const rzp = normalizeRazorpayEvent(
+      JSON.stringify({
+        id: "evt_rzp_nolive",
+        event: "payment.captured",
+        payload: { payment: { entity: { amount: 29_900, currency: "INR" } } },
+      }),
+    );
+    expect(rzp.ok).toBe(true);
+    expect(rzp.ok ? rzp.event.livemode : "unset").toBeUndefined();
+  });
+});
