@@ -40,6 +40,10 @@ const { verifyStripeSignature, normalizeStripeEvent } = await import(
 const { verifyRazorpaySignature, normalizeRazorpayEvent } = await import(
   "../src/lib/billing/razorpay"
 );
+// Phase 11A — saveScan requires a provenance receipt (src/lib/scanReceipt.ts);
+// this suite seeds the internal signing key and mints with the shared library.
+const { mintScanReceipt } = await import("../src/lib/scanReceipt");
+const RECEIPT_KEY = "b7".repeat(32); // 64 hex chars = 32 bytes
 
 type Row = Record<string, unknown> & { _id: string };
 
@@ -774,23 +778,29 @@ describe("billing — plan limits at feature gates", () => {
       count: PLANS.free.limits.savedScansPerMonth,
       updatedAt: now,
     });
+    // Phase 11A: receipt key + a receipt over this exact payload.
+    await s.ctx.db.insert("scanReceiptKeys", { key: RECEIPT_KEY, createdAt: now });
+    const saveArgs = {
+      url: "https://site.test/",
+      visitorId: "visitor-1",
+      scannedAt: now,
+    };
+    const receipt = await mintScanReceipt({ url: saveArgs.url, scannedAt: now }, RECEIPT_KEY);
+
     signedInAs = s.userId;
     await expectCode(
-      handler(scans.saveScan)._handler(s.ctx, {
-        url: "https://site.test/",
-        visitorId: "visitor-1",
-        scannedAt: now,
-      }),
+      handler(scans.saveScan)._handler(s.ctx, { ...saveArgs, receipt }),
       "plan_limit",
     );
     expect((s.tables.scans ?? []).length).toBe(0);
 
     // Anonymous visitors keep the pre-Phase-7 behavior (no monthly gate).
+    // The SAME receipt stays valid for the same payload (nothing about the
+    // report changed between the two attempts).
     signedInAs = null;
     const id = (await handler(scans.saveScan)._handler(s.ctx, {
-      url: "https://site.test/",
-      visitorId: "visitor-1",
-      scannedAt: now,
+      ...saveArgs,
+      receipt,
     })) as string;
     expect(typeof id).toBe("string");
     expect((s.tables.scans ?? []).length).toBe(1);

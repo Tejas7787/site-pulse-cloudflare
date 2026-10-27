@@ -9,7 +9,9 @@ import { fetchTarget, detectBlock, isHtmlResponse } from "../lib/fetchTarget";
 import { makeFinding, type FindingInput } from "../lib/findings";
 import { detectSitePages } from "../lib/siteIdentity";
 import tls from "node:tls";
+import { randomBytes } from "node:crypto";
 import { checkUrlSafety } from "../lib/ssrf";
+import { mintScanReceipt } from "../lib/scanReceipt";
 import { probeOriginStatus, type OriginProbeOutcome } from "../lib/originProbe";
 
 // ── Helpers ──────────────────────────────────────────────────────────
@@ -1395,7 +1397,7 @@ export const scanWebsite = action({
       );
     }
 
-    return {
+    const payload = {
       url: parsedUrl.href,
       finalUrl,
       status,
@@ -1481,5 +1483,17 @@ export const scanWebsite = action({
 
       scannedAt: scannedAtMs,
     };
+
+    // Phase 11A — provenance receipt. The ENTIRE server-computed payload is
+    // signed (canonical form + expiry) with a key that lives only inside the
+    // deployment, so the client's follow-up `scans.saveScan` call can prove
+    // this scan happened server-side and that no field was changed in
+    // transit. See src/lib/scanReceipt.ts and src/convex/scans.ts.
+    const receiptKey = await ctx.runMutation(internal.scans.getOrCreateReceiptKey, {
+      candidate: randomBytes(32).toString("hex"),
+    });
+    const receipt = await mintScanReceipt(payload, receiptKey);
+
+    return { ...payload, receipt };
   },
 });

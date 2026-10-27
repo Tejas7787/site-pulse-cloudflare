@@ -5,6 +5,7 @@ import { internal } from "./_generated/api";
 import { scanRetentionCutoff } from "./retention";
 import { consumeQuota, SAVE_SCAN_LIMIT, SCAN_WINDOW_MS } from "./rateLimit";
 import { consumeMonthlyQuota, entitlementsOf } from "./billing";
+import { verifyScanReceipt, type ScanReceipt } from "../lib/scanReceipt";
 
 // Bounded batch cleanup of expired scan reports.
 // Kept small and explicit so a single invocation can never blow up, and so
@@ -122,8 +123,35 @@ export const saveScan = mutation({
     scannedAt: v.number(),
     /** Client-side visitor identity for the storage quota (see handler). */
     visitorId: v.optional(v.string()),
+    /**
+     * Phase 11A — provenance receipt minted by the scanWebsite action over
+     * this exact payload (see src/lib/scanReceipt.ts). Optional at the type
+     * level so a missing receipt produces OUR typed invalid_receipt error
+     * (reason "missing") instead of a generic argument-validation failure;
+     * it is still rejected either way, before any quota or write.
+     */
+    receipt: v.optional(
+      v.object({ exp: v.number(), sig: v.string() }),
+    ),
   },
   handler: async (ctx, args) => {
+    // 0. Provenance (Phase 11A): this mutation is PUBLIC, so the report
+    //    content must be proven to come from a server-side scan before
+    //    anything else happens. Verification reads the internal-only signing
+    //    key (never exposed to clients) and runs BEFORE the quota steps and
+    //    BEFORE any insert — a rejected call consumes nothing and writes
+    //    nothing. Missing key, missing receipt, bad signature, tampered
+    //    payload and expiry all fail closed with a typed reason.
+    const { receipt, visitorId, ...doc } = args;
+    const keyRow = await ctx.db.query("scanReceiptKeys").first();
+    if (!keyRow) {
+      throw new ConvexError({ code: "invalid_receipt", reason: "key_unavailable" });
+    }
+    const verdict = await verifyScanReceipt(doc, receipt as ScanReceipt | undefined, keyRow.key);
+    if (!verdict.ok) {
+      throw new ConvexError({ code: "invalid_receipt", reason: verdict.reason });
+    }
+
     // Storage-spam protection, server-side: this mutation is public (the
     // anonymous scan flow must be able to persist its report), so a rolling
     // window quota is consumed BEFORE any row is written. The key mirrors the
@@ -132,7 +160,6 @@ export const saveScan = mutation({
     // is not authorization. SAVE_SCAN_LIMIT is 2x SCAN_LIMIT, and the honest
     // flow performs at most one save per successful scan, so legitimate scan
     // completion can never be refused here.
-    const { visitorId, ...doc } = args;
     const visitor = visitorId?.trim().slice(0, 64) || "anonymous";
     const quota = await consumeQuota(ctx, {
       key: `save-scan:${visitor}`,
@@ -178,6 +205,30 @@ export const saveScan = mutation({
     }
     const id = await ctx.db.insert("scans", doc);
     return id;
+  },
+});
+
+/**
+ * Phase 11A — create-once receipt signing key (INTERNAL: callable only from
+ * other Convex functions, never from a client). The scanWebsite action
+ * generates 32 crypto-random bytes and offers them as `candidate`; the first
+ * scan's candidate becomes the deployment's key and later calls simply read
+ * it back. Mutations are serializable, so concurrent first scans cannot
+ * create two keys. No environment variable and no hardcoded secret: losing
+ * the row only invalidates outstanding receipts (clients just rescan).
+ */
+export const getOrCreateReceiptKey = internalMutation({
+  args: { candidate: v.string() },
+  handler: async (ctx, args) => {
+    const existing = await ctx.db.query("scanReceiptKeys").first();
+    if (existing) return existing.key;
+    // Defense in depth: only a well-formed 32-byte hex value may become the
+    // key, so a bug in a caller can never install a weak key.
+    if (!/^[0-9a-f]{64}$/.test(args.candidate)) {
+      throw new Error("Invalid receipt key candidate.");
+    }
+    await ctx.db.insert("scanReceiptKeys", { key: args.candidate, createdAt: Date.now() });
+    return args.candidate;
   },
 });
 

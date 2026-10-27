@@ -615,6 +615,17 @@ const schema = defineSchema(
       count: v.number(),
       updatedAt: v.number(),
     }).index("by_key", ["key"]),
+
+    // Phase 11A — scan provenance receipt key (INTERNAL ONLY, never returned
+    // to any client and never readable through a public query). A single row:
+    // the HMAC key the scanWebsite action uses to sign saveScan receipts and
+    // saveScan uses to verify them (src/lib/scanReceipt.ts). Generated
+    // server-side with crypto randomness on the first scan — no env var, no
+    // hardcoded secret, fail-closed when absent.
+    scanReceiptKeys: defineTable({
+      key: v.string(),
+      createdAt: v.number(),
+    }),
   },
   { schemaValidation: false },
 );

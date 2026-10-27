@@ -5,6 +5,7 @@ import { api } from "../convex/_generated/api";
 import { trackEvent, getVisitorId } from "../lib/analytics";
 import FeedbackModal from "../components/FeedbackModal";
 import { addScanToHistory, getScanHistory, type ScanHistoryEntry } from "../lib/scanHistory";
+import { nullsToUndefined } from "../lib/nulls";
 import { friendlyError } from "@/lib/userErrors";
 import { ScoreTrend } from "../components/ScoreTrend";
 import { StatusPill } from "../components/ui/status-pill";
@@ -113,16 +114,8 @@ const priorityConfig: Record<Priority, { label: string; color: string; bg: strin
 
 const categoryOrder = ["Performance", "SEO", "Security", "Accessibility", "Technical Health"];
 
-function nullsToUndefined<T>(value: T): T {
-  if (value === null) return undefined as T;
-  if (Array.isArray(value)) return value.map((item) => nullsToUndefined(item)) as T;
-  if (typeof value === "object") {
-    const out: Record<string, unknown> = {};
-    for (const [key, val] of Object.entries(value as Record<string, unknown>)) out[key] = nullsToUndefined(val);
-    return out as T;
-  }
-  return value;
-}
+// nullsToUndefined now lives in src/lib/nulls.ts (Phase 11A): the shared
+// conversion the receipt round trip and its tests both use.
 
 // ── Inline recommendations group ────────────────────────────────────────
 // One group per category in the on-page results: severity and priority chips,
@@ -253,8 +246,13 @@ export default function Landing() {
         // The scan itself succeeded — only persisting the shareable report was
         // refused (server-side storage quota). Say so plainly instead of
         // failing silently; the results above stay on screen.
-        if (err instanceof ConvexError && (err.data as { code?: string } | undefined)?.code === "rate_limited") {
+        const code = err instanceof ConvexError ? (err.data as { code?: string } | undefined)?.code : undefined;
+        if (code === "rate_limited") {
           setError("Your scan finished and the results are shown above, but saving the shareable report reached this browser's hourly save limit. Please try again in a few minutes.");
+        } else if (code === "invalid_receipt") {
+          // Phase 11A: the server could not verify this report's provenance.
+          // Results stay on screen; a fresh scan mints a new receipt.
+          setError("Your scan finished and the results are shown above, but the shareable report could not be verified for saving. Please run the scan again.");
         }
         setTimeout(() => { resultsRef.current?.scrollIntoView({ behavior: "smooth" }); }, 100);
       }

@@ -20,6 +20,7 @@ import { api } from "../src/convex/_generated/api";
 import schema from "../src/convex/schema";
 import { DIAGNOSIS_LIMIT_PER_HOUR } from "../src/lib/aiDoctor";
 import { SAVE_SCAN_LIMIT } from "../src/convex/rateLimit";
+import { mintScanReceipt } from "../src/lib/scanReceipt";
 
 const read = (rel: string) => readFileSync(join(import.meta.dir, "..", rel), "utf8");
 
@@ -104,18 +105,42 @@ const saveArgs = {
   visitorId: "save-visitor",
 };
 
+// Phase 11A — saveScan now requires a provenance receipt over the exact
+// payload it accepts (src/lib/scanReceipt.ts). Tests seed the internal
+// signing key and mint receipts with the SAME shared library the server
+// uses, so the real verification path is exercised, never bypassed.
+const TEST_KEY = "a1".repeat(32); // 64 hex chars = 32 bytes
+type Args = Record<string, unknown>;
+function reportPayload(args: Args): Args {
+  const rest = { ...args };
+  delete rest.receipt;
+  delete rest.visitorId;
+  return rest;
+}
+const seedKey = (t: ReturnType<typeof freshBackend>) =>
+  t.run((ctx) => ctx.db.insert("scanReceiptKeys", { key: TEST_KEY, createdAt: Date.now() }));
+const withReceipt = async (args: Args) => ({
+  ...args,
+  receipt: await mintScanReceipt(reportPayload(args), TEST_KEY),
+});
+const signedSaveArgs = {
+  ...saveArgs,
+  receipt: await mintScanReceipt(reportPayload(saveArgs), TEST_KEY),
+};
+
 /* ── 2. saveScan storage quota — real handler ──────────────────────────── */
 
 describe("saveScan — server-side storage quota (public write endpoint)", () => {
   test("allows the honest flow up to the limit, then refuses with rate_limited", async () => {
     const t = freshBackend();
+    await seedKey(t);
     for (let i = 0; i < SAVE_SCAN_LIMIT; i++) {
-      const id = await t.mutation(api.scans.saveScan, saveArgs);
+      const id = await t.mutation(api.scans.saveScan, signedSaveArgs);
       expect(typeof id).toBe("string");
     }
     let thrown: unknown = null;
     try {
-      await t.mutation(api.scans.saveScan, saveArgs);
+      await t.mutation(api.scans.saveScan, signedSaveArgs);
     } catch (err) {
       thrown = err;
     }
@@ -127,12 +152,14 @@ describe("saveScan — server-side storage quota (public write endpoint)", () =>
 
   test("the quota is per identity: another visitor can still save", async () => {
     const t = freshBackend();
+    await seedKey(t);
     for (let i = 0; i < SAVE_SCAN_LIMIT; i++) {
-      await t.mutation(api.scans.saveScan, saveArgs);
+      await t.mutation(api.scans.saveScan, signedSaveArgs);
     }
     const id = await t.mutation(api.scans.saveScan, {
       ...saveArgs,
       visitorId: "other-visitor",
+      receipt: await mintScanReceipt(reportPayload({ ...saveArgs, visitorId: "other-visitor" }), TEST_KEY),
     });
     expect(typeof id).toBe("string");
     // Public report links are preserved: the saved scan is readable by id,
@@ -143,9 +170,12 @@ describe("saveScan — server-side storage quota (public write endpoint)", () =>
 
   test("non-http(s) URLs are refused before any row is written", async () => {
     const t = freshBackend();
+    await seedKey(t);
     let thrown: unknown = null;
     try {
-      await t.mutation(api.scans.saveScan, { ...saveArgs, url: "javascript:alert(1)" });
+      // A valid receipt over the bad URL payload: provenance passes, then the
+      // URL rule refuses it — the URL guard is still exercised on its own.
+      await t.mutation(api.scans.saveScan, await withReceipt({ ...saveArgs, url: "javascript:alert(1)" }));
     } catch (err) {
       thrown = err;
     }
