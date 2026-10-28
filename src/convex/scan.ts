@@ -10,7 +10,8 @@ import { makeFinding, type FindingInput } from "../lib/findings";
 import { detectSitePages } from "../lib/siteIdentity";
 import tls from "node:tls";
 import { randomBytes } from "node:crypto";
-import { checkUrlSafety } from "../lib/ssrf";
+import { checkUrlSafety, resolveSafeDestination } from "../lib/ssrf";
+import { createPinnedLookup } from "../lib/pinnedFetch";
 import { mintScanReceipt } from "../lib/scanReceipt";
 import { probeOriginStatus, type OriginProbeOutcome } from "../lib/originProbe";
 
@@ -878,8 +879,32 @@ export const scanWebsite = action({
 
     if (isHttps) {
       try {
+        // Phase 11B: this handshake is the scanner's SECOND DNS-dependent
+        // connection (the main fetch is pinned inside pinnedFetch). Validate
+        // the destination here, then hand tls.connect a lookup that can only
+        // return those validated addresses — the handshake itself can never
+        // re-resolve into a private network. host/servername stay exactly as
+        // before, so certificate evidence and therefore scoring are unchanged;
+        // a pin failure lands in the same catch as any other handshake
+        // failure ("Unable to Verify", ssl-valid not-checked).
+        const tlsPin = await resolveSafeDestination(parsedUrl.href);
+        if (!tlsPin.ok) {
+          throw new Error(
+            tlsPin.reason === "dns"
+              ? "The certificate host could not be resolved to a public address."
+              : "The certificate host is a private or restricted address.",
+          );
+        }
         const cert = await new Promise<tls.PeerCertificate>((resolve, reject) => {
-          const socket = tls.connect({ host: parsedUrl.hostname, port: 443, servername: parsedUrl.hostname, rejectUnauthorized: false, timeout: 5000 }, () => {
+          const socket = tls.connect({
+            host: parsedUrl.hostname,
+            port: 443,
+            servername: parsedUrl.hostname,
+            rejectUnauthorized: false,
+            timeout: 5000,
+            // Pinned: only the already-validated addresses, no re-resolution.
+            lookup: createPinnedLookup(tlsPin.addresses, parsedUrl.hostname),
+          }, () => {
             const peerCert = socket.getPeerCertificate();
             socket.end();
             if (peerCert && peerCert.valid_from) resolve(peerCert);

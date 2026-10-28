@@ -35,6 +35,7 @@ import {
   verifyScanReceipt,
 } from "../src/lib/scanReceipt";
 import { nullsToUndefined } from "../src/lib/nulls";
+import { setPinnedFetchDepsForTests, type PinnedSendArgs } from "../src/lib/pinnedFetch";
 
 const read = (rel: string) => readFileSync(join(import.meta.dir, "..", rel), "utf8");
 
@@ -343,26 +344,32 @@ describe("saveScan — provenance verification (public write endpoint)", () => {
 describe("legitimate flow: scanWebsite mints, saveScan verifies, getScan serves", () => {
   test("8. a real scan's receipt saves its real report (public /report link intact)", async () => {
     const t = freshBackend();
-    const realFetch = globalThis.fetch;
     const html =
       '<!doctype html><html lang="en"><head><meta charset="utf-8">' +
       '<meta name="viewport" content="width=device-width, initial-scale=1">' +
       "<title>Receipt Test Site</title></head><body><h1>Hello</h1>" +
       '<img src="/a.png" alt="a"><a href="/next">next</a></body></html>';
-    globalThis.fetch = (async (input: RequestInfo | URL) => {
-      const url = String(input instanceof Request ? input.url : input);
-      if (url.includes("robots.txt") || url.includes("sitemap.xml")) {
-        return new Response("not found", { status: 404 });
-      }
-      return new Response(html, {
-        status: 200,
-        headers: { "content-type": "text/html; charset=utf-8", server: "receipt-test" },
-      });
-    }) as typeof fetch;
+    // Phase 11B: the scanner's default transport is the pinned client; the
+    // connection step is the injectable seam. Every request must already be
+    // pinned to the validated address of the IP literal (no DNS involved).
+    const connections: Array<{ host?: string; addresses: string[] }> = [];
+    setPinnedFetchDepsForTests({
+      send: async (args: PinnedSendArgs) => {
+        connections.push({ host: args.headers.host, addresses: [...args.addresses] });
+        if (args.url.pathname.includes("robots.txt") || args.url.pathname.includes("sitemap.xml")) {
+          return new Response("not found", { status: 404 });
+        }
+        return new Response(html, {
+          status: 200,
+          headers: { "content-type": "text/html; charset=utf-8", server: "receipt-test" },
+        });
+      },
+    });
 
     try {
       // Public IP literal: the SSRF guard passes without touching real DNS,
-      // and http:// means the TLS probe is skipped. fetch is stubbed above.
+      // and http:// means the TLS probe is skipped. The pinned transport's
+      // connection step is stubbed above.
       const res = await t.action(api.scan.scanWebsite, {
         url: "http://93.184.216.34/",
         visitorId: "e2e-visitor",
@@ -388,8 +395,17 @@ describe("legitimate flow: scanWebsite mints, saveScan verifies, getScan serves"
       await expectRejected(() =>
         t.mutation(api.scans.saveScan, { ...forSave, score: 100, visitorId: "e2e-visitor" }),
       );
+
+      // Phase 11B: every scanner connection (main fetch + robots + sitemap)
+      // was pinned to the validated public address, with the Host header
+      // preserving the original hostname.
+      expect(connections.length).toBeGreaterThanOrEqual(3);
+      for (const connection of connections) {
+        expect(connection.addresses).toEqual(["93.184.216.34"]);
+        expect(connection.host).toBe("93.184.216.34");
+      }
     } finally {
-      globalThis.fetch = realFetch;
+      setPinnedFetchDepsForTests(null);
     }
   });
 });

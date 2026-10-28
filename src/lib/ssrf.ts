@@ -13,11 +13,18 @@
 //      plain dotted-quad regex silently lets through.
 //   4. FAIL CLOSED: when the address cannot be determined, the URL is not safe.
 //
-// Residual risk (documented, deferred): this validates the address *before*
-// the HTTP client connects, and plain `fetch` resolves DNS again at connect
-// time (DNS-rebinding TOCTOU). Closing that requires a connection-time
-// resolver (undici dispatcher with a pinned lookup), which is not available
-// with the stock client; targets are also constrained to ports 80/443.
+// Phase 11B — the DNS-rebinding / TOCTOU gap that used to be listed here as a
+// deferred residual risk is CLOSED. A one-time policy check before an
+// ordinary `fetch` was not enough: the stock client resolves DNS again at
+// connect time, so an attacker-controlled DNS server could answer the second
+// resolution with a private address. Now every scanner/probe connection goes
+// through src/lib/pinnedFetch.ts (and the TLS certificate probe through
+// createPinnedLookup): each request — and each redirect hop — calls
+// resolveSafeDestination() below, which resolves and validates EVERY answer,
+// and the socket is then opened with a custom lookup that can only return
+// those already-validated addresses. The HTTP client never resolves DNS
+// itself, so there is no window between validation and connection. Targets
+// remain constrained to ports 80/443.
 
 import { isIP } from "node:net";
 
@@ -134,6 +141,14 @@ function classifyIpv6(hextets: number[]): boolean {
   if ((first & 0xfe00) === 0xfc00) return true; // fc00::/7 unique local
   if ((first & 0xffc0) === 0xfe80) return true; // fe80::/10 link-local
   if ((first & 0xff00) === 0xff00) return true; // ff00::/8 multicast
+  // Phase 11B — remaining special-purpose ranges (IANA IPv6 registry).
+  if (first === 0x0100 && hextets[1] === 0 && hextets[2] === 0 && hextets[3] === 0) {
+    return true; // 100::/64 discard-only
+  }
+  if (first === 0x2001 && hextets[1] === 0) return true; // 2001::/32 Teredo (embeds an IPv4)
+  if (first === 0x2001 && hextets[1] === 0x0db8) return true; // 2001:db8::/32 documentation
+  if (first === 0x2002) return true; // 2002::/16 6to4 (embeds an IPv4)
+  if (first === 0x3fff && (hextets[1] & 0xf000) === 0) return true; // 3fff::/20 documentation
   return false;
 }
 
@@ -222,38 +237,40 @@ async function defaultResolve(hostname: string): Promise<string[]> {
 }
 
 /**
- * Full safety check for one URL. `reason` distinguishes a policy rejection
- * ("blocked") from a DNS failure ("dns") so callers can word the error honestly.
+ * The shared URL analysis behind checkUrlSafety() (the policy verdict, used
+ * since Phase 5) and resolveSafeDestination() (Phase 11B pinning). On "ok" it
+ * also hands back the exact set of validated public addresses the connection
+ * is allowed to use, so validation and connection share ONE resolution.
  */
-export async function checkUrlSafety(
+async function analyzeUrl(
   urlStr: string,
   options: SafetyOptions = {},
-): Promise<{ ok: boolean; reason: SafetyReason }> {
+): Promise<{ reason: SafetyReason; url?: URL; addresses?: string[] }> {
   const failClosed = options.failClosed ?? true;
 
   let parsed: URL;
   try {
     parsed = new URL(urlStr);
   } catch {
-    return { ok: false, reason: "invalid" };
+    return { reason: "invalid" };
   }
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    return { ok: false, reason: "scheme" };
+    return { reason: "scheme" };
   }
   // Port allowlist: an arbitrary-port target turns a health check into a
   // scanner for internal services.
   if (parsed.port !== "" && parsed.port !== "80" && parsed.port !== "443") {
-    return { ok: false, reason: "port" };
+    return { reason: "port" };
   }
 
   const host = parsed.hostname;
   const literal = normalizeIpLiteral(host);
   if (literal !== null) {
     return isPrivateAddress(literal)
-      ? { ok: false, reason: "blocked" }
-      : { ok: true, reason: "ok" };
+      ? { reason: "blocked" }
+      : { reason: "ok", url: parsed, addresses: [literal] };
   }
-  if (isInternalHostname(host)) return { ok: false, reason: "blocked" };
+  if (isInternalHostname(host)) return { reason: "blocked" };
 
   const resolve = options.resolve ?? defaultResolve;
   let addresses: string[];
@@ -261,16 +278,58 @@ export async function checkUrlSafety(
     addresses = await resolve(host);
   } catch {
     // Cannot prove the destination is public ⇒ do not connect.
-    return failClosed ? { ok: false, reason: "dns" } : { ok: true, reason: "ok" };
+    return failClosed ? { reason: "dns" } : { reason: "ok", url: parsed };
   }
   if (addresses.length === 0) {
-    return failClosed ? { ok: false, reason: "dns" } : { ok: true, reason: "ok" };
+    return failClosed ? { reason: "dns" } : { reason: "ok", url: parsed };
   }
   // ANY private answer disqualifies the hostname (mixed public/private sets).
   if (addresses.some((addr) => isPrivateAddress(addr))) {
-    return { ok: false, reason: "blocked" };
+    return { reason: "blocked" };
   }
-  return { ok: true, reason: "ok" };
+  return { reason: "ok", url: parsed, addresses };
+}
+
+/**
+ * Full safety check for one URL. `reason` distinguishes a policy rejection
+ * ("blocked") from a DNS failure ("dns") so callers can word the error honestly.
+ */
+export async function checkUrlSafety(
+  urlStr: string,
+  options: SafetyOptions = {},
+): Promise<{ ok: boolean; reason: SafetyReason }> {
+  const { reason } = await analyzeUrl(urlStr, options);
+  return { ok: reason === "ok", reason };
+}
+
+export type SafeDestination =
+  | { ok: true; url: URL; addresses: string[] }
+  | { ok: false; reason: SafetyReason };
+
+/**
+ * Phase 11B — resolve, validate, and HAND BACK the addresses a connection may
+ * use. Unlike checkUrlSafety this ALWAYS fails closed (`failClosed: false` is
+ * deliberately not honored: a pin that cannot be proven public must not
+ * exist). The caller opens the socket to exactly these addresses with no
+ * further DNS of its own — see src/lib/pinnedFetch.ts and the TLS probe in
+ * src/convex/scan.ts. Inject `resolve` for deterministic tests.
+ */
+export async function resolveSafeDestination(
+  urlStr: string,
+  options: Pick<SafetyOptions, "resolve"> = {},
+): Promise<SafeDestination> {
+  const analysis = await analyzeUrl(urlStr, { ...options, failClosed: true });
+  if (
+    analysis.reason !== "ok" ||
+    !analysis.url ||
+    !analysis.addresses ||
+    analysis.addresses.length === 0
+  ) {
+    // "ok but no addresses" cannot happen with failClosed: true; treat it as
+    // a DNS failure anyway rather than ever returning an unpinned destination.
+    return { ok: false, reason: analysis.reason === "ok" ? "dns" : analysis.reason };
+  }
+  return { ok: true, url: analysis.url, addresses: analysis.addresses };
 }
 
 /** Boolean convenience wrapper around checkUrlSafety(). */

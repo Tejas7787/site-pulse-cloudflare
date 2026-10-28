@@ -4,6 +4,15 @@
 // complete. Detects blocks (403/429/CAPTCHA/bot protection), timeouts and
 // incomplete responses so the caller can mark content checks Unable to Verify
 // instead of reporting false failures.
+//
+// Phase 11B: the default transport is src/lib/pinnedFetch.ts — it resolves,
+// validates and PINS the connection address for every hop (initial URL and
+// each redirect destination independently), so no re-resolution can rebind a
+// checked hostname into a private network. The `assertSafe` hook stays as the
+// policy layer (scheme/port/internal-host wording + test seam); the transport
+// re-validates its own DNS answers and connects only to those.
+
+import { pinnedFetch } from "./pinnedFetch";
 
 export interface RedirectHop {
   /** URL that produced the redirect. */
@@ -38,6 +47,11 @@ export type FetchOutcome =
     };
 
 export interface FetchTargetOptions {
+  /**
+   * Test-only override of the HTTP client. Production must keep the default
+   * (the pinned transport, src/lib/pinnedFetch.ts): an injected client
+   * BYPASSES connection pinning, so it exists purely for deterministic tests.
+   */
   fetchImpl?: typeof fetch;
   maxRedirects?: number;
   timeoutMs?: number;
@@ -73,7 +87,7 @@ export async function fetchTarget(
   options: FetchTargetOptions = {},
 ): Promise<FetchOutcome> {
   const {
-    fetchImpl = fetch,
+    fetchImpl = pinnedFetch,
     maxRedirects = 10,
     timeoutMs = 12_000,
     maxBytes = 5 * 1024 * 1024,

@@ -21,11 +21,12 @@
 //     NO status field — so blocked destinations cannot surface in report
 //     evidence at all (scan.ts maps "unavailable" to Unable-to-Verify).
 //
-// Residual risk, unchanged and documented in src/lib/ssrf.ts: the policy
-// resolves DNS at check time and the stock client resolves again at connect
-// time (DNS-rebinding TOCTOU). Closing that needs a connection-time pinned
-// resolver, which the shared client does not have; targets stay constrained
-// to ports 80/443 either way.
+// Phase 11B: the residual DNS-rebinding TOCTOU risk formerly documented here
+// is CLOSED. The shared client's default transport (src/lib/pinnedFetch.ts)
+// re-resolves, re-validates and PINS the socket address for the initial URL
+// and for every redirect hop, so a probe can no longer be rebound into a
+// private network between check and connect. Targets stay constrained to
+// ports 80/443.
 
 import { fetchTarget } from "./fetchTarget";
 import { checkUrlSafety, type SafetyOptions } from "./ssrf";
